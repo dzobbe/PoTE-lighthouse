@@ -71,6 +71,8 @@ pub mod signed_voluntary_exit;
 pub mod signing_data;
 pub mod sync_committee_subscription;
 pub mod sync_duty;
+pub mod attestation_service;
+pub mod tee_attestation;
 pub mod validator;
 pub mod validator_subscription;
 pub mod voluntary_exit;
@@ -95,6 +97,7 @@ pub mod sync_committee_contribution;
 pub mod sync_committee_message;
 pub mod sync_selection_proof;
 pub mod sync_subnet_id;
+pub mod tee_types;
 pub mod validator_registration_data;
 pub mod withdrawal;
 

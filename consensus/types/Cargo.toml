@@ -27,6 +27,7 @@ portable = ["bls/supranational-portable"]
 alloy-primitives = { workspace = true }
 alloy-rlp = { version = "0.3.4", features = ["derive"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
+base64 = { workspace = true }
 bls = { workspace = true }
 compare_fields = { workspace = true }
 compare_fields_derive = { workspace = true }
@@ -51,6 +52,7 @@ rand = { workspace = true }
 rand_xorshift = "0.4.0"
 rayon = { workspace = true }
 regex = { workspace = true }
+reqwest = { workspace = true }
 rpds = { workspace = true }
 rusqlite = { workspace = true, optional = true }
 safe_arith = { workspace = true }
@@ -63,6 +65,7 @@ superstruct = { workspace = true }
 swap_or_not_shuffle = { workspace = true }
 tempfile = { workspace = true }
 test_random_derive = { path = "../../common/test_random_derive" }
+tokio = { workspace = true }
 tracing = { workspace = true }
 tree_hash = { workspace = true }
 tree_hash_derive = { workspace = true }

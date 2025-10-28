@@ -106,6 +106,7 @@ anyhow = "1"
 arbitrary = { version = "1", features = ["derive"] }
 async-channel = "1.9.0"
 axum = "0.7.7"
+base64 = "0.13"
 beacon_chain = { path = "beacon_node/beacon_chain" }
 beacon_node = { path = "beacon_node" }
 beacon_node_fallback = { path = "validator_client/beacon_node_fallback" }

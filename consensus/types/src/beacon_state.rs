@@ -4,6 +4,7 @@ use crate::FixedBytesExtended;
 use crate::historical_summary::HistoricalSummary;
 use crate::test_utils::TestRandom;
 use crate::*;
+use crate::tee_types::{TEEValidator, TEEValidatorSelection, TEECommittee, TEEType};
 use compare_fields::CompareFields;
 use compare_fields_derive::CompareFields;
 use derivative::Derivative;
@@ -2698,6 +2699,230 @@ impl<E: EthSpec> BeaconState<E> {
         }
 
         Ok(())
+    }
+
+    // TEE Validator Selection Methods
+    
+    /// Get all active TEE validators
+    pub fn get_active_tee_validators(&self) -> Result<Vec<TEEValidator>, Error> {
+        // For now, return empty vector - this would be populated from a TEE validator registry
+        // In a real implementation, this would read from a TEE-specific validator list
+        Ok(vec![])
+    }
+    
+    /// Select TEE validators for consensus duties
+    pub fn select_tee_validators_for_consensus(
+        &self,
+        slot: Slot,
+        spec: &ChainSpec,
+    ) -> Result<TEEValidatorSelection, Error> {
+        let active_tee_validators = self.get_active_tee_validators()?;
+        
+        // Group validators by TEE type
+        let mut validators_by_type: std::collections::HashMap<TEEType, Vec<&TEEValidator>> = std::collections::HashMap::new();
+        for validator in &active_tee_validators {
+            if validator.is_active && validator.has_valid_attestation(self.get_time()?) {
+                validators_by_type.entry(validator.tee_type.clone())
+                    .or_default()
+                    .push(validator);
+            }
+        }
+        
+        // Ensure we have at least one validator of each required TEE type
+        let required_types = vec![TEEType::SEV, TEEType::TDX, TEEType::CCA];
+        for tee_type in &required_types {
+            if !validators_by_type.contains_key(tee_type) {
+                return Err(Error::InsufficientValidators);
+            }
+        }
+        
+        // Select proposers (one from each TEE type)
+        let mut proposers = Vec::new();
+        for tee_type in &required_types {
+            let validators = validators_by_type.get(tee_type).unwrap();
+            let proposer = self.select_proposer_from_tee_type(
+                validators, 
+                slot, 
+                spec
+            )?;
+            proposers.push(proposer.clone());
+        }
+        
+        // Select attestation committees (random across all TEE types)
+        let committees = self.select_tee_attestation_committees(
+            &active_tee_validators,
+            slot,
+            spec
+        )?;
+        
+        Ok(TEEValidatorSelection {
+            proposers,
+            committees,
+            required_tee_types: required_types,
+        })
+    }
+    
+    /// Select a proposer from a specific TEE type (random selection)
+    fn select_proposer_from_tee_type(
+        &self,
+        validators: &[&TEEValidator],
+        slot: Slot,
+        spec: &ChainSpec,
+    ) -> Result<TEEValidator, Error> {
+        if validators.is_empty() {
+            return Err(Error::InsufficientValidators);
+        }
+        
+        // Use slot-based randomness for selection
+        let seed = self.get_tee_selection_seed(slot, spec)?;
+        
+        // Additional randomness using the seed
+        let random_offset = self.compute_tee_random_offset(&seed, validators.len())?;
+        let selected_index = (slot.as_u64() as usize + random_offset) % validators.len();
+        
+        Ok(validators[selected_index].clone())
+    }
+    
+    /// Select attestation committees (random across all TEE types)
+    fn select_tee_attestation_committees(
+        &self,
+        validators: &[TEEValidator],
+        slot: Slot,
+        spec: &ChainSpec,
+    ) -> Result<Vec<TEECommittee>, Error> {
+        let current_time = self.get_time()?;
+        let active_validators: Vec<_> = validators
+            .iter()
+            .filter(|v| v.is_active && v.has_valid_attestation(current_time))
+            .collect();
+            
+        if active_validators.is_empty() {
+            return Err(Error::InsufficientValidators);
+        }
+        
+        // Shuffle validators using slot-based randomness
+        let seed = self.get_tee_selection_seed(slot, spec)?;
+        let mut shuffled_indices = (0..active_validators.len()).collect::<Vec<_>>();
+        self.shuffle_tee_validators(&mut shuffled_indices, &seed, spec)?;
+        
+        // Divide into committees
+        let committees_per_slot = self.calculate_tee_committees_per_slot(active_validators.len(), spec)?;
+        let mut committees = Vec::new();
+        
+        for committee_index in 0..committees_per_slot {
+            let start = (committee_index * active_validators.len()) / committees_per_slot;
+            let end = ((committee_index + 1) * active_validators.len()) / committees_per_slot;
+            
+            let committee_validators: Vec<_> = shuffled_indices[start..end]
+                .iter()
+                .map(|&idx| active_validators[idx].clone())
+                .collect();
+                
+            committees.push(TEECommittee {
+                slot,
+                index: committee_index as u64,
+                validators: committee_validators,
+            });
+        }
+        
+        Ok(committees)
+    }
+    
+    /// Get TEE selection seed for randomization
+    fn get_tee_selection_seed(&self, slot: Slot, spec: &ChainSpec) -> Result<Vec<u8>, Error> {
+        let epoch = slot.epoch(E::slots_per_epoch());
+        let mut preimage = self
+            .get_seed(epoch, Domain::BeaconAttester, spec)?
+            .as_slice()
+            .to_vec();
+        preimage.append(&mut int_to_bytes8(slot.as_u64()));
+        Ok(hash(&preimage))
+    }
+    
+    /// Compute random offset for TEE validator selection
+    fn compute_tee_random_offset(&self, seed: &[u8], validator_count: usize) -> Result<usize, Error> {
+        if validator_count == 0 {
+            return Ok(0);
+        }
+        
+        let hash_result = hash(seed);
+        let random_bytes = &hash_result[0..8];
+        let random_value = u64::from_le_bytes([
+            random_bytes[0], random_bytes[1], random_bytes[2], random_bytes[3],
+            random_bytes[4], random_bytes[5], random_bytes[6], random_bytes[7],
+        ]);
+        
+        Ok((random_value as usize) % validator_count)
+    }
+    
+    /// Shuffle TEE validators using the seed
+    fn shuffle_tee_validators(
+        &self,
+        indices: &mut [usize],
+        seed: &[u8],
+        spec: &ChainSpec,
+    ) -> Result<(), Error> {
+        // Use the existing shuffle algorithm but adapted for TEE validators
+        let shuffled = swap_or_not_shuffle::shuffle_list(
+            indices.to_vec(),
+            spec.shuffle_round_count,
+            seed,
+            false,
+        ).ok_or(Error::UnableToShuffle)?;
+        
+        indices.copy_from_slice(&shuffled);
+        Ok(())
+    }
+    
+    /// Calculate number of TEE committees per slot
+    fn calculate_tee_committees_per_slot(
+        &self,
+        validator_count: usize,
+        spec: &ChainSpec,
+    ) -> Result<usize, Error> {
+        // Ensure we have at least one committee per slot
+        let min_committees = 1;
+        let max_committees = validator_count / 4; // Minimum 4 validators per committee
+        
+        Ok(std::cmp::max(min_committees, std::cmp::min(max_committees, 64)))
+    }
+    
+    /// Get current time for TEE attestation validation
+    fn get_time(&self) -> Result<u64, Error> {
+        // This would typically get the current system time
+        // For now, return a placeholder
+        Ok(self.genesis_time() + self.slot().as_u64() * 12) // 12 seconds per slot
+    }
+    
+    /// Verify TEE consensus diversity
+    pub fn verify_tee_consensus_diversity(
+        &self,
+        proposer_pubkey: &PublicKeyBytes,
+        attestation_pubkeys: &[PublicKeyBytes],
+    ) -> Result<bool, Error> {
+        let mut tee_types_present = std::collections::HashSet::new();
+        
+        // Check proposer TEE type
+        if let Some(proposer) = self.get_tee_validator_by_pubkey(proposer_pubkey)? {
+            tee_types_present.insert(proposer.tee_type);
+        }
+        
+        // Check attestation TEE types
+        for pubkey in attestation_pubkeys {
+            if let Some(validator) = self.get_tee_validator_by_pubkey(pubkey)? {
+                tee_types_present.insert(validator.tee_type);
+            }
+        }
+        
+        // Require at least 3 different TEE types
+        Ok(tee_types_present.len() >= 3)
+    }
+    
+    /// Get TEE validator by public key
+    fn get_tee_validator_by_pubkey(&self, pubkey: &PublicKeyBytes) -> Result<Option<TEEValidator>, Error> {
+        // This would look up the TEE validator in the registry
+        // For now, return None as placeholder
+        Ok(None)
     }
 }
 
