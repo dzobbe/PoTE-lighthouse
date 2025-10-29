@@ -124,6 +124,7 @@ impl<E: EthSpec> InteropGenesisBuilder<E> {
                     pubkey: keypair.pk.clone().into(),
                     amount,
                     signature: Signature::empty().into(),
+                    tee_vendor: types::tee_types::TEEType::SEV, // Default to SEV for interop
                 };
 
                 data.signature = data.create_signature(&keypair.sk, spec);

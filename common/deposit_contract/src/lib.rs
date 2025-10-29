@@ -1,7 +1,7 @@
 use ethabi::{Contract, Token};
 use ssz::{Decode, DecodeError as SszDecodeError, Encode};
 use tree_hash::TreeHash;
-use types::{DepositData, Hash256, PublicKeyBytes, SignatureBytes};
+use types::{DepositData, Hash256, PublicKeyBytes, SignatureBytes, tee_types::TEEType};
 
 pub use ethabi::Error;
 
@@ -77,6 +77,7 @@ pub fn decode_eth1_tx_data(
         signature: decode_token!(SignatureBytes, into_bytes),
         withdrawal_credentials: decode_token!(Hash256, into_bytes),
         pubkey: decode_token!(PublicKeyBytes, into_bytes),
+        tee_vendor: TEEType::SEV, // Default to AMD SEV for deposit contract
     };
 
     Ok((deposit_data, root))

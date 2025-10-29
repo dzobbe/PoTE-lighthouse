@@ -159,6 +159,7 @@ pub mod deposit_log {
                     .map_err(|e| format!("Invalid amount ssz: {:?}", e))?,
                 signature: SignatureBytes::from_ssz_bytes(signature)
                     .map_err(|e| format!("Invalid signature ssz: {:?}", e))?,
+                tee_vendor: types::tee_types::TEEType::SEV, // Default to SEV
             };
 
             let signature_is_valid = deposit_pubkey_signature_message(&deposit_data, spec)

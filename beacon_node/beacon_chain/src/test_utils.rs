@@ -2303,6 +2303,7 @@ where
                 ),
                 amount: self.spec.min_deposit_amount,
                 signature: SignatureBytes::empty(),
+                tee_vendor: types::tee_types::TEEType::SEV, // Default to SEV
             };
 
             data.signature = data.create_signature(&keypair.sk, &self.spec);

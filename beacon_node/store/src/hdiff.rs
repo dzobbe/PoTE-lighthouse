@@ -505,6 +505,12 @@ impl ValidatorsDiff {
                             } else {
                                 Epoch::new(0)
                             },
+                            // tee_vendor can change on index re-use
+                            tee_vendor: if pubkey_changed {
+                                y.tee_vendor.clone()
+                            } else {
+                                types::tee_types::TEEType::SEV // Default to SEV
+                            },
                         }
                     }
                 } else {

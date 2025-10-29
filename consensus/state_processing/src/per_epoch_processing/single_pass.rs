@@ -385,6 +385,7 @@ pub fn process_epoch_single_pass<E: EthSpec>(
                 withdrawal_credentials: deposit.withdrawal_credentials,
                 amount: deposit.amount,
                 signature: deposit.signature,
+                tee_vendor: deposit.tee_vendor,
             };
             // Only check the signature if this is the first deposit for the validator,
             // following the logic from `apply_pending_deposit` in the spec.
@@ -398,6 +399,7 @@ pub fn process_epoch_single_pass<E: EthSpec>(
                     deposit_data.pubkey,
                     deposit_data.withdrawal_credentials,
                     deposit_data.amount,
+                    deposit_data.tee_vendor,
                     spec,
                 )?;
                 added_validators.push((deposit_data.pubkey, validator_index));

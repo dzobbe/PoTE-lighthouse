@@ -7,6 +7,7 @@ use crate::common::{
 use crate::per_block_processing::errors::{BlockProcessingError, IntoWithIndex};
 use types::consts::altair::{PARTICIPATION_FLAG_WEIGHTS, PROPOSER_WEIGHT, WEIGHT_DENOMINATOR};
 use types::typenum::U33;
+use types::tee_types::TEEType;
 
 pub fn process_operations<E: EthSpec, Payload: AbstractExecPayload<E>>(
     state: &mut BeaconState<E>,
@@ -449,6 +450,7 @@ pub fn apply_deposit<E: EthSpec>(
                 amount,
                 signature: deposit_data.signature,
                 slot: spec.genesis_slot, // Use `genesis_slot` to distinguish from a pending deposit request
+                tee_vendor: deposit_data.tee_vendor,
             })?;
         } else {
             // Update the existing validator balance.
@@ -463,6 +465,7 @@ pub fn apply_deposit<E: EthSpec>(
             return Ok(());
         }
 
+        let tee_vendor = deposit_data.tee_vendor.clone();
         state.add_validator_to_registry(
             deposit_data.pubkey,
             deposit_data.withdrawal_credentials,
@@ -471,6 +474,7 @@ pub fn apply_deposit<E: EthSpec>(
             } else {
                 amount
             },
+            deposit_data.tee_vendor,
             spec,
         )?;
 
@@ -482,6 +486,7 @@ pub fn apply_deposit<E: EthSpec>(
                 amount,
                 signature: deposit_data.signature,
                 slot: spec.genesis_slot, // Use `genesis_slot` to distinguish from a pending deposit request
+                tee_vendor,
             })?;
         }
     }
@@ -605,6 +610,7 @@ pub fn process_deposit_requests<E: EthSpec>(
                 amount: request.amount,
                 signature: request.signature.clone(),
                 slot,
+                tee_vendor: TEEType::SEV, // Default to AMD SEV for deposit requests
             })?;
         }
     }

@@ -965,6 +965,9 @@ impl<E: EthSpec> BeaconState<E> {
     }
 
     /// Compute the proposer (not necessarily for the Beacon chain) from a list of indices.
+    ///
+    /// Modified to use TEE vendor-based selection instead of effective balance weighting.
+    /// Validators are selected based on their TEE vendor type with equal probability within each vendor.
     pub fn compute_proposer_index(
         &self,
         indices: &[usize],
@@ -975,33 +978,43 @@ impl<E: EthSpec> BeaconState<E> {
             return Err(Error::InsufficientValidators);
         }
 
-        let max_effective_balance = spec.max_effective_balance_for_fork(self.fork_name_unchecked());
-        let max_random_value = if self.fork_name_unchecked().electra_enabled() {
-            MAX_RANDOM_VALUE
-        } else {
-            MAX_RANDOM_BYTE
-        };
+        // Group validators by TEE vendor
+        let mut vendor_groups: std::collections::HashMap<TEEType, Vec<usize>> = std::collections::HashMap::new();
+        
+        for &index in indices {
+            if let Ok(validator) = self.get_validator(index) {
+                vendor_groups.entry(validator.tee_vendor.clone()).or_insert_with(Vec::new).push(index);
+            }
+        }
 
-        let mut i = 0;
-        loop {
+        // Select a vendor group first (equal probability for each vendor)
+        let vendor_keys: Vec<_> = vendor_groups.keys().collect();
+        if vendor_keys.is_empty() {
+            return Err(Error::InsufficientValidators);
+        }
+
+        // Use the seed to select a vendor group
+        let vendor_seed = &seed[..std::cmp::min(seed.len(), 32)];
+        let vendor_index = (vendor_seed[0] as usize) % vendor_keys.len();
+        let selected_vendor = vendor_keys[vendor_index];
+
+        // Select a validator from the chosen vendor group
+        if let Some(vendor_indices) = vendor_groups.get(selected_vendor) {
             let shuffled_index = compute_shuffled_index(
-                i.safe_rem(indices.len())?,
-                indices.len(),
+                0, // Always use index 0 for the first (and only) selection
+                vendor_indices.len(),
                 seed,
                 spec.shuffle_round_count,
             )
             .ok_or(Error::UnableToShuffle)?;
-            let candidate_index = *indices
+
+            let candidate_index = *vendor_indices
                 .get(shuffled_index)
                 .ok_or(Error::ShuffleIndexOutOfBounds(shuffled_index))?;
-            let random_value = self.shuffling_random_value(i, seed)?;
-            let effective_balance = self.get_effective_balance(candidate_index)?;
-            if effective_balance.safe_mul(max_random_value)?
-                >= max_effective_balance.safe_mul(random_value)?
-            {
-                return Ok(candidate_index);
-            }
-            i.safe_add_assign(1)?;
+
+            Ok(candidate_index)
+        } else {
+            Err(Error::InsufficientValidators)
         }
     }
 
@@ -1798,6 +1811,7 @@ impl<E: EthSpec> BeaconState<E> {
         pubkey: PublicKeyBytes,
         withdrawal_credentials: Hash256,
         amount: u64,
+        tee_vendor: TEEType,
         spec: &ChainSpec,
     ) -> Result<usize, Error> {
         let index = self.validators().len();
@@ -1806,6 +1820,7 @@ impl<E: EthSpec> BeaconState<E> {
             pubkey,
             withdrawal_credentials,
             amount,
+            tee_vendor,
             fork_name,
             spec,
         ))?;
@@ -2456,6 +2471,7 @@ impl<E: EthSpec> BeaconState<E> {
                 amount: excess_balance,
                 signature: Signature::infinity()?.into(),
                 slot: spec.genesis_slot,
+                tee_vendor: validator.tee_vendor,
             })?;
         }
         Ok(())
@@ -2878,7 +2894,7 @@ impl<E: EthSpec> BeaconState<E> {
     fn calculate_tee_committees_per_slot(
         &self,
         validator_count: usize,
-        spec: &ChainSpec,
+        _spec: &ChainSpec,
     ) -> Result<usize, Error> {
         // Ensure we have at least one committee per slot
         let min_committees = 1;
@@ -2919,7 +2935,7 @@ impl<E: EthSpec> BeaconState<E> {
     }
     
     /// Get TEE validator by public key
-    fn get_tee_validator_by_pubkey(&self, pubkey: &PublicKeyBytes) -> Result<Option<TEEValidator>, Error> {
+    fn get_tee_validator_by_pubkey(&self, _pubkey: &PublicKeyBytes) -> Result<Option<TEEValidator>, Error> {
         // This would look up the TEE validator in the registry
         // For now, return None as placeholder
         Ok(None)

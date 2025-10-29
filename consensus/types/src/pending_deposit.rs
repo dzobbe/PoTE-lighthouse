@@ -1,5 +1,6 @@
 use crate::test_utils::TestRandom;
 use crate::*;
+use crate::tee_types::TEEType;
 use serde::{Deserialize, Serialize};
 use ssz_derive::{Decode, Encode};
 use test_random_derive::TestRandom;
@@ -17,6 +18,8 @@ pub struct PendingDeposit {
     pub amount: u64,
     pub signature: SignatureBytes,
     pub slot: Slot,
+    /// TEE vendor type for this validator (Intel, AMD, ARM)
+    pub tee_vendor: TEEType,
 }
 
 #[cfg(test)]

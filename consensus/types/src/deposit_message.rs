@@ -1,5 +1,6 @@
 use crate::test_utils::TestRandom;
 use crate::*;
+use crate::tee_types::TEEType;
 
 use serde::{Deserialize, Serialize};
 use ssz_derive::{Decode, Encode};
@@ -17,6 +18,8 @@ pub struct DepositMessage {
     pub withdrawal_credentials: Hash256,
     #[serde(with = "serde_utils::quoted_u64")]
     pub amount: u64,
+    /// TEE vendor type for this validator (Intel, AMD, ARM)
+    pub tee_vendor: TEEType,
 }
 
 impl SignedRoot for DepositMessage {}

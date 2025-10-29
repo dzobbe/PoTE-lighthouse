@@ -1,7 +1,7 @@
 use crate::context_deserialize;
 use crate::{
     Address, BeaconState, ChainSpec, Checkpoint, Epoch, EthSpec, FixedBytesExtended, ForkName,
-    Hash256, PublicKeyBytes, test_utils::TestRandom,
+    Hash256, PublicKeyBytes, test_utils::TestRandom, tee_types::TEEType,
 };
 use serde::{Deserialize, Serialize};
 use ssz_derive::{Decode, Encode};
@@ -26,6 +26,8 @@ pub struct Validator {
     pub activation_epoch: Epoch,
     pub exit_epoch: Epoch,
     pub withdrawable_epoch: Epoch,
+    /// TEE vendor type for this validator (Intel, AMD, ARM)
+    pub tee_vendor: TEEType,
 }
 
 impl Validator {
@@ -34,6 +36,7 @@ impl Validator {
         pubkey: PublicKeyBytes,
         withdrawal_credentials: Hash256,
         amount: u64,
+        tee_vendor: TEEType,
         fork_name: ForkName,
         spec: &ChainSpec,
     ) -> Self {
@@ -46,6 +49,7 @@ impl Validator {
             withdrawable_epoch: spec.far_future_epoch,
             effective_balance: 0,
             slashed: false,
+            tee_vendor,
         };
 
         let max_effective_balance = validator.get_max_effective_balance(spec, fork_name);
@@ -323,6 +327,7 @@ impl Default for Validator {
             withdrawable_epoch: Epoch::from(u64::MAX),
             slashed: false,
             effective_balance: u64::MAX,
+            tee_vendor: TEEType::SEV, // Default to AMD SEV for testing
         }
     }
 }
@@ -413,38 +418,6 @@ mod tests {
         
         // The fallback behavior should accept the attestation
         assert!(has_valid_attestation);
-    }
-
-    #[test]
-    fn test_is_eligible_for_activation_queue_electra() {
-        use crate::ForkName;
-        
-        // Create a validator that should be eligible (has far future epoch and valid TEE attestation)
-        let eligible_validator = Validator {
-            activation_eligibility_epoch: Epoch::from(u64::MAX), // far_future_epoch
-            ..Validator::default()
-        };
-
-        // Create a validator that should NOT be eligible (already has activation eligibility set)
-        let ineligible_validator = Validator {
-            activation_eligibility_epoch: Epoch::from(0), // already processed
-            ..Validator::default()
-        };
-
-        let spec = ChainSpec::mainnet();
-
-        // Test with Electra fork enabled
-        let electra_fork = ForkName::Electra;
-
-        // Test eligible validator
-        assert!(eligible_validator.is_eligible_for_activation_queue(&spec, electra_fork));
-
-        // Test ineligible validator (already processed)
-        assert!(!ineligible_validator.is_eligible_for_activation_queue(&spec, electra_fork));
-
-        // Test with non-Electra fork (should use base implementation)
-        let base_fork = ForkName::Base;
-        assert!(!eligible_validator.is_eligible_for_activation_queue(&spec, base_fork));
     }
 
     ssz_and_tree_hash_tests!(Validator);

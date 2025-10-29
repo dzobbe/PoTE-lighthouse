@@ -4,7 +4,7 @@ use safe_arith::SafeArith;
 use std::mem;
 use types::{
     BeaconState, BeaconStateElectra, BeaconStateError as Error, ChainSpec, Epoch, EpochCache,
-    EthSpec, Fork, PendingDeposit,
+    EthSpec, Fork, PendingDeposit, tee_types::TEEType,
 };
 
 /// Transform a `Deneb` state into an `Electra` state.
@@ -75,6 +75,7 @@ pub fn upgrade_to_electra<E: EthSpec>(
                 amount: balance_copy,
                 signature: Signature::infinity()?.into(),
                 slot: spec.genesis_slot,
+                tee_vendor: TEEType::SEV, // Default to AMD SEV for upgrade
             })
             .map_err(Error::MilhouseError)?;
     }

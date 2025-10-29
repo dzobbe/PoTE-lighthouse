@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 use crate::*;
 use crate::tee_attestation::TEEAttestation;
+use crate::test_utils::TestRandom;
+use tree_hash::TreeHash;
+use ssz::Encode;
+use smallvec::SmallVec;
 
 /// TEE technology types supported by the consensus
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
@@ -208,3 +212,32 @@ impl std::fmt::Display for TEEConsensusError {
 }
 
 impl std::error::Error for TEEConsensusError {}
+
+// Manual implementations for TestRandom and TreeHash
+impl TestRandom for TEEType {
+    fn random_for_test(rng: &mut impl rand::RngCore) -> Self {
+        match rng.next_u32() % 3 {
+            0 => TEEType::SEV,
+            1 => TEEType::TDX,
+            _ => TEEType::CCA,
+        }
+    }
+}
+
+impl TreeHash for TEEType {
+    fn tree_hash_type() -> tree_hash::TreeHashType {
+        tree_hash::TreeHashType::Vector
+    }
+
+    fn tree_hash_packed_encoding(&self) -> SmallVec<[u8; 32]> {
+        SmallVec::from_slice(&self.ssz_bytes_len().to_le_bytes())
+    }
+
+    fn tree_hash_packing_factor() -> usize {
+        1
+    }
+
+    fn tree_hash_root(&self) -> tree_hash::Hash256 {
+        tree_hash::Hash256::from_slice(&self.ssz_bytes_len().to_le_bytes())
+    }
+}
