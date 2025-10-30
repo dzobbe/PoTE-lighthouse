@@ -610,7 +610,7 @@ pub fn process_deposit_requests<E: EthSpec>(
                 amount: request.amount,
                 signature: request.signature.clone(),
                 slot,
-                tee_vendor: TEEType::SEV, // Default to AMD SEV for deposit requests
+                tee_vendor: TEEType::TDX, // Default to TDX for deposit requests
             })?;
         }
     }

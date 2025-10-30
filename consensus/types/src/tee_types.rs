@@ -57,13 +57,14 @@ impl ssz::Decode for TEEType {
             });
         }
 
-        match bytes[0] {
+        let last_byte = bytes[bytes.len() - 1];
+        match last_byte {
             0 => Ok(TEEType::SEV),
             1 => Ok(TEEType::TDX),
             2 => Ok(TEEType::CCA),
             _ => Err(ssz::DecodeError::BytesInvalid(format!(
                 "Invalid TEE type byte: {}",
-                bytes[0]
+                last_byte
             ))),
         }
     }

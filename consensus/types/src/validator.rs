@@ -327,7 +327,7 @@ impl Default for Validator {
             withdrawable_epoch: Epoch::from(u64::MAX),
             slashed: false,
             effective_balance: u64::MAX,
-            tee_vendor: TEEType::SEV, // Default to AMD SEV for testing
+            tee_vendor: TEEType::TDX, // Default to TDX for testing
         }
     }
 }

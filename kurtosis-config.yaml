@@ -2,11 +2,17 @@
 participants:
   - el_type: geth
     cl_type: lighthouse
-    cl_image: giobbe/poc-lighthouse
+    cl_image: docker.io/giobbe/poc-lighthouse
     count: 2
-  - el_type: geth
-    cl_type: teku
+
+
 network_params:
   network_id: "585858"
+
+# Point the package at our *custom* genesis generator (built with our SSZ)
+ethereum_genesis_generator_params:
+  image: docker.io/giobbe/poc-ethereum-genesis-generator
+  extra_env: {}
+
 additional_services:
   - dora

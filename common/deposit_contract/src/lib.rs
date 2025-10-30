@@ -99,6 +99,7 @@ mod tests {
             withdrawal_credentials: Hash256::from_slice(&[42; 32]),
             amount: u64::MAX,
             signature: Signature::empty().into(),
+            tee_vendor: TEEType::TDX, // Default to TDX for tests
         };
         deposit_data.signature = deposit_data.create_signature(&keypair.sk, spec);
         deposit_data
