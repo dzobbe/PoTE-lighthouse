@@ -224,7 +224,7 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
                 SqrtTotalActiveBalance::new(processing_epoch_end.get_total_active_balance()?);
             for attester in get_attesting_indices_from_state(state, attestation)? {
                 let validator = processing_epoch_end.get_validator(attester as usize)?;
-                if !validator.slashed
+                if !validator.is_slashed()
                     && !rewarded_attesters.contains(&attester)
                     && !has_earlier_attestation(
                         state,

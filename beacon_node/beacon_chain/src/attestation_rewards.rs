@@ -251,7 +251,7 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
                     let (ideal_reward, penalty) = ideal_rewards_hashmap
                         .get(&(flag_index, effective_balance))
                         .ok_or(BeaconChainError::AttestationRewardsError)?;
-                    let voted_correctly = !validator.slashed
+                    let voted_correctly = !validator.is_slashed()
                         && previous_epoch_participation_flags.has_flag(flag_index)?;
                     if voted_correctly {
                         if flag_index == TIMELY_HEAD_FLAG_INDEX {

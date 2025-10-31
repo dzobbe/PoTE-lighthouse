@@ -95,7 +95,7 @@ pub fn validator_inclusion_data<T: BeaconChainTypes>(
     let summary = get_epoch_processing_summary(&mut state, &chain.spec)?;
 
     Ok(Some(ValidatorInclusionData {
-        is_slashed: validator.slashed,
+        is_slashed: validator.is_slashed(),
         is_withdrawable_in_current_epoch: validator.is_withdrawable_at(epoch),
         is_active_unslashed_in_current_epoch: summary
             .is_active_unslashed_in_current_epoch(validator_index),

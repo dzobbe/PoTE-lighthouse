@@ -246,7 +246,7 @@ pub fn process_epoch_single_pass<E: EthSpec>(
         let is_active_current_epoch = validator.is_active_at(current_epoch);
         let is_active_previous_epoch = validator.is_active_at(previous_epoch);
         let is_eligible = is_active_previous_epoch
-            || (validator.slashed && previous_epoch.safe_add(1)? < validator.withdrawable_epoch);
+            || (validator.is_slashed() && previous_epoch.safe_add(1)? < validator.withdrawable_epoch);
 
         let base_reward = if is_eligible {
             epoch_cache.get_base_reward(index)?
@@ -259,7 +259,7 @@ pub fn process_epoch_single_pass<E: EthSpec>(
             effective_balance: validator.effective_balance,
             base_reward,
             is_eligible,
-            is_slashed: validator.slashed,
+            is_slashed: validator.is_slashed(),
             is_active_current_epoch,
             is_active_previous_epoch,
             previous_epoch_participation,
@@ -385,7 +385,7 @@ pub fn process_epoch_single_pass<E: EthSpec>(
                 withdrawal_credentials: deposit.withdrawal_credentials,
                 amount: deposit.amount,
                 signature: deposit.signature,
-                tee_vendor: deposit.tee_vendor,
+                tee_type: deposit.tee_type,
             };
             // Only check the signature if this is the first deposit for the validator,
             // following the logic from `apply_pending_deposit` in the spec.
@@ -399,7 +399,7 @@ pub fn process_epoch_single_pass<E: EthSpec>(
                     deposit_data.pubkey,
                     deposit_data.withdrawal_credentials,
                     deposit_data.amount,
-                    deposit_data.tee_vendor,
+                    deposit_data.tee_type,
                     spec,
                 )?;
                 added_validators.push((deposit_data.pubkey, validator_index));
@@ -916,7 +916,7 @@ fn process_single_slashing(
     state_ctxt: &StateContext,
     spec: &ChainSpec,
 ) -> Result<(), Error> {
-    if validator.slashed && slashings_ctxt.target_withdrawable_epoch == validator.withdrawable_epoch
+    if validator.is_slashed() && slashings_ctxt.target_withdrawable_epoch == validator.withdrawable_epoch
     {
         let increment = spec.effective_balance_increment;
         let penalty = if state_ctxt.fork_name.electra_enabled() {
@@ -1124,7 +1124,7 @@ fn process_pending_consolidations<E: EthSpec>(
         let source_index = pending_consolidation.source_index as usize;
         let target_index = pending_consolidation.target_index as usize;
         let source_validator = state.get_validator(source_index)?;
-        if source_validator.slashed {
+        if source_validator.is_slashed() {
             next_pending_consolidation.safe_add_assign(1)?;
             continue;
         }
@@ -1265,7 +1265,7 @@ fn process_single_effective_balance_update(
         // Update progressive balances cache for the *current* epoch, which will soon become the
         // previous epoch once the epoch transition completes.
         progressive_balances.on_effective_balance_change(
-            validator.slashed,
+            validator.is_slashed(),
             validator_current_epoch_participation,
             old_effective_balance,
             new_effective_balance,

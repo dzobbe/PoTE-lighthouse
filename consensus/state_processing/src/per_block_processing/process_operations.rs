@@ -450,7 +450,7 @@ pub fn apply_deposit<E: EthSpec>(
                 amount,
                 signature: deposit_data.signature,
                 slot: spec.genesis_slot, // Use `genesis_slot` to distinguish from a pending deposit request
-                tee_vendor: deposit_data.tee_vendor,
+                tee_type: deposit_data.tee_type,
             })?;
         } else {
             // Update the existing validator balance.
@@ -465,7 +465,7 @@ pub fn apply_deposit<E: EthSpec>(
             return Ok(());
         }
 
-        let tee_vendor = deposit_data.tee_vendor.clone();
+        let tee_type = deposit_data.tee_type.clone();
         state.add_validator_to_registry(
             deposit_data.pubkey,
             deposit_data.withdrawal_credentials,
@@ -474,7 +474,7 @@ pub fn apply_deposit<E: EthSpec>(
             } else {
                 amount
             },
-            deposit_data.tee_vendor,
+            deposit_data.tee_type,
             spec,
         )?;
 
@@ -486,7 +486,7 @@ pub fn apply_deposit<E: EthSpec>(
                 amount,
                 signature: deposit_data.signature,
                 slot: spec.genesis_slot, // Use `genesis_slot` to distinguish from a pending deposit request
-                tee_vendor,
+                tee_type,
             })?;
         }
     }
@@ -610,7 +610,7 @@ pub fn process_deposit_requests<E: EthSpec>(
                 amount: request.amount,
                 signature: request.signature.clone(),
                 slot,
-                tee_vendor: TEEType::TDX, // Default to TDX for deposit requests
+                tee_type: TEEType::TDX, // Default to TDX for deposit requests
             })?;
         }
     }

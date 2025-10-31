@@ -25,7 +25,7 @@ pub fn slash_validator<E: EthSpec>(
     initiate_validator_exit(state, slashed_index, spec)?;
 
     let validator = state.get_validator_mut(slashed_index)?;
-    validator.slashed = true;
+    validator.set_slashed(true);
     validator.withdrawable_epoch = cmp::max(
         validator.withdrawable_epoch,
         epoch.safe_add(E::EpochsPerSlashingsVector::to_u64())?,

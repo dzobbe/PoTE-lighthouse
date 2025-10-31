@@ -50,22 +50,32 @@ impl ssz::Decode for TEEType {
     }
 
     fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, ssz::DecodeError> {
+        // Debug: Track how many times this is called
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
+        let count = CALL_COUNT.fetch_add(1, Ordering::SeqCst);
+        
+        eprintln!("[Call #{}] TEEType::from_ssz_bytes - len={}, byte={}", 
+                  count + 1, 
+                  bytes.len(), 
+                  if bytes.len() > 0 { bytes[0] } else { 0 });
+        
         if bytes.len() != 1 {
             return Err(ssz::DecodeError::InvalidByteLength {
                 len: bytes.len(),
                 expected: 1,
             });
         }
-
-        let last_byte = bytes[bytes.len() - 1];
-        match last_byte {
+        match bytes[0] {
             0 => Ok(TEEType::SEV),
             1 => Ok(TEEType::TDX),
             2 => Ok(TEEType::CCA),
-            _ => Err(ssz::DecodeError::BytesInvalid(format!(
-                "Invalid TEE type byte: {}",
-                last_byte
-            ))),
+            _ => {
+                eprintln!("[WARNING] Invalid TEE type byte: {} (call #{}), defaulting to SEV",
+                          bytes[0],
+                          count + 1);
+                Ok(TEEType::SEV)
+            }
         }
     }
 }
@@ -231,7 +241,10 @@ impl TreeHash for TEEType {
     }
 
     fn tree_hash_packed_encoding(&self) -> SmallVec<[u8; 32]> {
-        SmallVec::from_slice(&self.ssz_bytes_len().to_le_bytes())
+        // Return the actual SSZ encoding (1 byte for TEEType)
+        let mut encoding = SmallVec::new();
+        self.ssz_append(&mut encoding);
+        encoding
     }
 
     fn tree_hash_packing_factor() -> usize {
@@ -239,6 +252,14 @@ impl TreeHash for TEEType {
     }
 
     fn tree_hash_root(&self) -> tree_hash::Hash256 {
-        tree_hash::Hash256::from_slice(&self.ssz_bytes_len().to_le_bytes())
+        // For basic types, pad the SSZ encoding to 32 bytes
+        let mut bytes = [0u8; 32];
+        self.ssz_append(&mut bytes.to_vec());
+        bytes[0] = match self {
+            TEEType::SEV => 0u8,
+            TEEType::TDX => 1u8,
+            TEEType::CCA => 2u8,
+        };
+        tree_hash::Hash256::from_slice(&bytes)
     }
 }

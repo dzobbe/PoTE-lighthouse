@@ -983,7 +983,7 @@ impl<E: EthSpec> BeaconState<E> {
         
         for &index in indices {
             if let Ok(validator) = self.get_validator(index) {
-                vendor_groups.entry(validator.tee_vendor.clone()).or_insert_with(Vec::new).push(index);
+                vendor_groups.entry(validator.tee_type.clone()).or_insert_with(Vec::new).push(index);
             }
         }
 
@@ -1811,7 +1811,7 @@ impl<E: EthSpec> BeaconState<E> {
         pubkey: PublicKeyBytes,
         withdrawal_credentials: Hash256,
         amount: u64,
-        tee_vendor: TEEType,
+        tee_type: TEEType,
         spec: &ChainSpec,
     ) -> Result<usize, Error> {
         let index = self.validators().len();
@@ -1820,7 +1820,7 @@ impl<E: EthSpec> BeaconState<E> {
             pubkey,
             withdrawal_credentials,
             amount,
-            tee_vendor,
+            tee_type,
             fork_name,
             spec,
         ))?;
@@ -2366,7 +2366,7 @@ impl<E: EthSpec> BeaconState<E> {
         val: &Validator,
     ) -> Result<bool, Error> {
         Ok(val.is_active_at(previous_epoch)
-            || (val.slashed && previous_epoch.safe_add(Epoch::new(1))? < val.withdrawable_epoch))
+            || (val.is_slashed() && previous_epoch.safe_add(Epoch::new(1))? < val.withdrawable_epoch))
     }
 
     /// Passing `previous_epoch` to this function rather than computing it internally provides
@@ -2471,7 +2471,7 @@ impl<E: EthSpec> BeaconState<E> {
                 amount: excess_balance,
                 signature: Signature::infinity()?.into(),
                 slot: spec.genesis_slot,
-                tee_vendor: validator.tee_vendor,
+                tee_type: validator.tee_type,
             })?;
         }
         Ok(())

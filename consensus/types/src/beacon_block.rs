@@ -354,7 +354,7 @@ impl<E: EthSpec, Payload: AbstractExecPayload<E>> BeaconBlockBase<E, Payload> {
             withdrawal_credentials: Hash256::zero(),
             amount: 0,
             signature: SignatureBytes::empty(),
-            tee_vendor: TEEType::SEV, // Default to AMD SEV for testing
+            tee_type: TEEType::SEV, // Default to AMD SEV for testing
         };
         let proposer_slashing = ProposerSlashing {
             signed_header_1: signed_header.clone(),

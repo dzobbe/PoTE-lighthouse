@@ -896,7 +896,7 @@ async fn invalid_signature_deposit() {
                 withdrawal_credentials: Hash256::zero(),
                 amount: 0,
                 signature: junk_signature().into(),
-                tee_vendor: types::tee_types::TEEType::TDX, // Default to TDX for tests
+                tee_type: types::tee_types::TEEType::TDX, // Default to TDX for tests
             },
         };
         let (mut block, signature) = snapshots[block_index]

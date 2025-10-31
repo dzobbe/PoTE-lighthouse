@@ -726,7 +726,7 @@ pub mod tests {
                             withdrawal_credentials: deposit.withdrawal_credentials,
                             amount: deposit.amount,
                             signature: SignatureBytes::empty(),
-                            tee_vendor: types::tee_types::TEEType::SEV, // Default to SEV for tests
+                            tee_type: types::tee_types::TEEType::SEV, // Default to SEV for tests
                         }
                         .as_deposit_message();
                         assert!(deposit.signature.decompress().unwrap().verify(
@@ -746,7 +746,7 @@ pub mod tests {
                                 withdrawal_credentials: deposit.withdrawal_credentials,
                                 amount: deposit.amount,
                                 signature: deposit.signature.clone(),
-                                tee_vendor: types::tee_types::TEEType::SEV, // Default to SEV for tests
+                                tee_type: types::tee_types::TEEType::SEV, // Default to SEV for tests
                             }
                             .tree_hash_root()
                         );

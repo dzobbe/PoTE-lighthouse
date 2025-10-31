@@ -393,14 +393,14 @@ impl ValidatorStatus {
                 ValidatorStatus::WithdrawalPossible
             }
         } else if validator.is_exited_at(epoch) && epoch < validator.withdrawable_epoch {
-            if validator.slashed {
+            if validator.is_slashed() {
                 ValidatorStatus::ExitedSlashed
             } else {
                 ValidatorStatus::ExitedUnslashed
             }
         } else if validator.is_active_at(epoch) {
             if validator.exit_epoch < far_future_epoch {
-                if validator.slashed {
+                if validator.is_slashed() {
                     ValidatorStatus::ActiveSlashed
                 } else {
                     ValidatorStatus::ActiveExiting

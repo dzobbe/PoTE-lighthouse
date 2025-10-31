@@ -39,7 +39,7 @@ pub fn initialize_progressive_balances_cache<E: EthSpec>(
         .zip(state.previous_epoch_participation()?)
     {
         // Exclude slashed validators. We are calculating *unslashed* participating totals.
-        if validator.slashed {
+        if validator.is_slashed() {
             continue;
         }
 

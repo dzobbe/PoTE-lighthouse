@@ -21,13 +21,13 @@ pub struct Validator {
     pub withdrawal_credentials: Hash256,
     #[serde(with = "serde_utils::quoted_u64")]
     pub effective_balance: u64,
-    pub slashed: bool,
+    /// TEE vendor type for this validator (repurposed from PoS 'slashed' field)
+    /// 0=SEV, 1=TDX, 2=CCA - stored in the original 'slashed' field position
+    pub tee_type: TEEType,
     pub activation_eligibility_epoch: Epoch,
     pub activation_epoch: Epoch,
     pub exit_epoch: Epoch,
     pub withdrawable_epoch: Epoch,
-    /// TEE vendor type for this validator (Intel, AMD, ARM)
-    pub tee_vendor: TEEType,
 }
 
 impl Validator {
@@ -36,7 +36,7 @@ impl Validator {
         pubkey: PublicKeyBytes,
         withdrawal_credentials: Hash256,
         amount: u64,
-        tee_vendor: TEEType,
+        tee_type: TEEType,
         fork_name: ForkName,
         spec: &ChainSpec,
     ) -> Self {
@@ -48,8 +48,7 @@ impl Validator {
             exit_epoch: spec.far_future_epoch,
             withdrawable_epoch: spec.far_future_epoch,
             effective_balance: 0,
-            slashed: false,
-            tee_vendor,
+            tee_type,
         };
 
         let max_effective_balance = validator.get_max_effective_balance(spec, fork_name);
@@ -67,9 +66,24 @@ impl Validator {
         self.activation_epoch <= epoch && epoch < self.exit_epoch
     }
 
+    /// Returns `true` if the validator has been slashed.
+    /// Note: In a non-PoS blockchain, this is always false (no slashing mechanism).
+    /// This maintains compatibility with PoS code that checks slashing status.
+    pub fn is_slashed(&self) -> bool {
+        false // No slashing in non-PoS blockchain
+    }
+
+    /// Sets the slashed status of the validator.
+    /// Note: In a non-PoS blockchain, this is a no-op (no slashing mechanism).
+    /// This maintains compatibility with PoS code that modifies slashing status.
+    pub fn set_slashed(&mut self, _slashed: bool) {
+        // No-op: no slashing in non-PoS blockchain
+    }
+
     /// Returns `true` if the validator is slashable at some epoch.
-    pub fn is_slashable_at(&self, epoch: Epoch) -> bool {
-        !self.slashed && self.activation_epoch <= epoch && epoch < self.withdrawable_epoch
+    /// Note: In a non-PoS blockchain, this is always false (no slashing mechanism).
+    pub fn is_slashable_at(&self, _epoch: Epoch) -> bool {
+        false // No slashing in non-PoS blockchain
     }
 
     /// Returns `true` if the validator is considered exited at some epoch.
@@ -325,9 +339,8 @@ impl Default for Validator {
             activation_epoch: Epoch::from(u64::MAX),
             exit_epoch: Epoch::from(u64::MAX),
             withdrawable_epoch: Epoch::from(u64::MAX),
-            slashed: false,
             effective_balance: u64::MAX,
-            tee_vendor: TEEType::TDX, // Default to TDX for testing
+            tee_type: TEEType::TDX, // Default to TDX for testing
         }
     }
 }
@@ -356,7 +369,7 @@ mod tests {
         assert!(!v.is_active_at(epoch));
         assert!(!v.is_exited_at(epoch));
         assert!(!v.is_withdrawable_at(epoch));
-        assert!(!v.slashed);
+        assert_eq!(v.tee_type, TEEType::TDX); // Default TEE type is TDX
     }
 
     #[test]

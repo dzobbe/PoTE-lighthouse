@@ -472,9 +472,6 @@ impl ValidatorsDiff {
                             effective_balance: y
                                 .effective_balance
                                 .wrapping_sub(x.effective_balance),
-                            // slashed can only change from false into true. In an index re-use it can
-                            // switch back to false, but in that case the pubkey will also change.
-                            slashed: y.slashed,
                             // activation_eligibility_epoch can never be zero under any case. It's
                             // set to either FAR_FUTURE_EPOCH or get_current_epoch(state) + 1
                             activation_eligibility_epoch: if y.activation_eligibility_epoch
@@ -505,9 +502,9 @@ impl ValidatorsDiff {
                             } else {
                                 Epoch::new(0)
                             },
-                            // tee_vendor can change on index re-use
-                            tee_vendor: if pubkey_changed {
-                                y.tee_vendor.clone()
+                            // tee_type can change on index re-use
+                            tee_type: if pubkey_changed {
+                                y.tee_type.clone()
                             } else {
                                 types::tee_types::TEEType::SEV // Default to SEV
                             },
@@ -548,7 +545,7 @@ impl ValidatorsDiff {
 
             if let Some(x) = xs.get_mut(index as usize) {
                 // Note: a pubkey change implies index re-use. In that case over-write
-                // withdrawal_credentials and slashed inconditionally as their default values
+                // withdrawal_credentials and tee_type inconditionally as their default values
                 // are valid values.
                 let pubkey_changed = diff.pubkey != *EMPTY_PUBKEY;
                 if pubkey_changed {
@@ -560,8 +557,9 @@ impl ValidatorsDiff {
                 if diff.effective_balance != 0 {
                     x.effective_balance = x.effective_balance.wrapping_add(diff.effective_balance);
                 }
-                if pubkey_changed || diff.slashed {
-                    x.slashed = diff.slashed;
+                // Update tee_type on pubkey change (index re-use)
+                if pubkey_changed {
+                    x.tee_type = diff.tee_type.clone();
                 }
                 if diff.activation_eligibility_epoch != Epoch::new(0) {
                     x.activation_eligibility_epoch = diff.activation_eligibility_epoch;
@@ -933,7 +931,7 @@ mod tests {
         Validator {
             pubkey: PublicKeyBytes::from_ssz_bytes(&pubkey).unwrap(),
             withdrawal_credentials: withdrawal_credentials.into(),
-            slashed: false,
+            tee_type: types::tee_types::TEEType::TDX, // Default to TDX for tests
             effective_balance: 32_000_000_000,
             activation_eligibility_epoch: Epoch::max_value(),
             activation_epoch: Epoch::max_value(),

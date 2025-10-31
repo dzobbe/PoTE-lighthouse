@@ -402,7 +402,7 @@ impl<E: EthSpec> OperationPool<E> {
                     && state
                         .validators()
                         .get(slashing.as_inner().signed_header_1.message.proposer_index as usize)
-                        .is_some_and(|validator| !validator.slashed)
+                        .is_some_and(|validator| !validator.is_slashed())
             },
             |slashing| slashing.as_inner().clone(),
             E::MaxProposerSlashings::to_usize(),

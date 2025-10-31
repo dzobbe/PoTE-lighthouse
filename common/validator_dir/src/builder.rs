@@ -193,7 +193,7 @@ impl<'a> Builder<'a> {
                     withdrawal_credentials,
                     amount,
                     signature: Signature::empty().into(),
-                    tee_vendor: types::tee_types::TEEType::SEV, // Default to SEV
+                    tee_type: types::tee_types::TEEType::SEV, // Default to SEV
                 };
 
                 deposit_data.signature = deposit_data.create_signature(&voting_keypair.sk, spec);

@@ -203,7 +203,7 @@ impl StandardDepositDataJson {
                 withdrawal_credentials,
                 amount,
                 signature: SignatureBytes::empty(),
-                tee_vendor: types::tee_types::TEEType::SEV, // Default to SEV
+                tee_type: types::tee_types::TEEType::SEV, // Default to SEV
             };
             deposit_data.signature = deposit_data.create_signature(&keypair.sk, spec);
             deposit_data
@@ -217,7 +217,7 @@ impl StandardDepositDataJson {
             withdrawal_credentials,
             amount,
             signature,
-            tee_vendor: _,
+            tee_type: _,
         } = deposit_data;
 
         Ok(Self {

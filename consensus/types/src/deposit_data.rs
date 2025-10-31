@@ -20,8 +20,8 @@ pub struct DepositData {
     #[serde(with = "serde_utils::quoted_u64")]
     pub amount: u64,
     pub signature: SignatureBytes,
-    /// TEE vendor type for this validator (Intel, AMD, ARM)
-    pub tee_vendor: TEEType,
+    /// TEE type for this validator (SEV, TDX, CCA)
+    pub tee_type: TEEType,
 }
 
 impl DepositData {
@@ -33,7 +33,7 @@ impl DepositData {
             pubkey: self.pubkey,
             withdrawal_credentials: self.withdrawal_credentials,
             amount: self.amount,
-            tee_vendor: self.tee_vendor.clone(),
+            tee_type: self.tee_type.clone(),
         }
     }
 

@@ -77,7 +77,7 @@ pub fn decode_eth1_tx_data(
         signature: decode_token!(SignatureBytes, into_bytes),
         withdrawal_credentials: decode_token!(Hash256, into_bytes),
         pubkey: decode_token!(PublicKeyBytes, into_bytes),
-        tee_vendor: TEEType::SEV, // Default to AMD SEV for deposit contract
+        tee_type: TEEType::SEV, // Default to AMD SEV for deposit contract
     };
 
     Ok((deposit_data, root))
@@ -99,7 +99,7 @@ mod tests {
             withdrawal_credentials: Hash256::from_slice(&[42; 32]),
             amount: u64::MAX,
             signature: Signature::empty().into(),
-            tee_vendor: TEEType::TDX, // Default to TDX for tests
+            tee_type: TEEType::TDX, // Default to TDX for tests
         };
         deposit_data.signature = deposit_data.create_signature(&keypair.sk, spec);
         deposit_data

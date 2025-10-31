@@ -18,8 +18,8 @@ pub struct DepositMessage {
     pub withdrawal_credentials: Hash256,
     #[serde(with = "serde_utils::quoted_u64")]
     pub amount: u64,
-    /// TEE vendor type for this validator (Intel, AMD, ARM)
-    pub tee_vendor: TEEType,
+    /// TEE type for this validator (SEV, TDX, CCA)
+    pub tee_type: TEEType,
 }
 
 impl SignedRoot for DepositMessage {}

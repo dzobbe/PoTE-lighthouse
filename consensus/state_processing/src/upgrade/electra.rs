@@ -75,7 +75,7 @@ pub fn upgrade_to_electra<E: EthSpec>(
                 amount: balance_copy,
                 signature: Signature::infinity()?.into(),
                 slot: spec.genesis_slot,
-                tee_vendor: TEEType::TDX, // Default to TDX for upgrade
+                tee_type: TEEType::TDX, // Default to TDX for upgrade
             })
             .map_err(Error::MilhouseError)?;
     }

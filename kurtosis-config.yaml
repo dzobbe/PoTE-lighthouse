@@ -12,7 +12,7 @@ network_params:
 # Point the package at our *custom* genesis generator (built with our SSZ)
 ethereum_genesis_generator_params:
   image: docker.io/giobbe/poc-ethereum-genesis-generator
-  extra_env: {}
+  extra_env: {TEE_VENDOR: 2}
 
 additional_services:
   - dora

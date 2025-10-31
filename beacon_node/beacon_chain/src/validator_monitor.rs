@@ -538,7 +538,7 @@ impl<E: EthSpec> ValidatorMonitor<E> {
                     metrics::set_int_gauge(
                         &metrics::VALIDATOR_MONITOR_SLASHED,
                         &[id],
-                        i64::from(validator.slashed),
+                        i64::from(validator.is_slashed()),
                     );
                     metrics::set_int_gauge(
                         &metrics::VALIDATOR_MONITOR_ACTIVE,
