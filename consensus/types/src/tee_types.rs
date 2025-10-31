@@ -242,9 +242,9 @@ impl TreeHash for TEEType {
 
     fn tree_hash_packed_encoding(&self) -> SmallVec<[u8; 32]> {
         // Return the actual SSZ encoding (1 byte for TEEType)
-        let mut encoding = SmallVec::new();
-        self.ssz_append(&mut encoding);
-        encoding
+        let mut vec = Vec::new();
+        self.ssz_append(&mut vec);
+        SmallVec::from_slice(&vec)
     }
 
     fn tree_hash_packing_factor() -> usize {
@@ -254,7 +254,6 @@ impl TreeHash for TEEType {
     fn tree_hash_root(&self) -> tree_hash::Hash256 {
         // For basic types, pad the SSZ encoding to 32 bytes
         let mut bytes = [0u8; 32];
-        self.ssz_append(&mut bytes.to_vec());
         bytes[0] = match self {
             TEEType::SEV => 0u8,
             TEEType::TDX => 1u8,
