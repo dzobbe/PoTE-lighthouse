@@ -73,5 +73,12 @@ pub fn get_state_before_applying_block<T: BeaconChainTypes>(
         .apply_blocks(vec![], Some(block.slot()))
         .map_err(unhandled_error::<BeaconChainError>)?;
 
-    Ok(replayer.into_state())
+    let mut state = replayer.into_state();
+    
+    // Update the pubkey cache after state advance, as epoch processing may have added new validators
+    state
+        .update_pubkey_cache()
+        .map_err(|e| unhandled_error(BeaconChainError::from(e)))?;
+    
+    Ok(state)
 }

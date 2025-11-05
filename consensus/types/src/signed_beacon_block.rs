@@ -289,6 +289,8 @@ impl<E: EthSpec, Payload: AbstractExecPayload<E>> SignedBeaconBlock<E, Payload> 
             parent_root: self.parent_root(),
             state_root: self.state_root(),
             body_root: body_merkle_tree.hash(),
+            proposer_tee_type: BeaconBlockHeader::placeholder_tee_type(),
+            proposer_tee_attestation: BeaconBlockHeader::create_placeholder_tee_attestation(),
         };
 
         let signed_header = SignedBeaconBlockHeader {

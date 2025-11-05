@@ -50,16 +50,7 @@ impl ssz::Decode for TEEType {
     }
 
     fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, ssz::DecodeError> {
-        // Debug: Track how many times this is called
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        static CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
-        let count = CALL_COUNT.fetch_add(1, Ordering::SeqCst);
-        
-        eprintln!("[Call #{}] TEEType::from_ssz_bytes - len={}, byte={}", 
-                  count + 1, 
-                  bytes.len(), 
-                  if bytes.len() > 0 { bytes[0] } else { 0 });
-        
+            
         if bytes.len() != 1 {
             return Err(ssz::DecodeError::InvalidByteLength {
                 len: bytes.len(),
@@ -70,11 +61,12 @@ impl ssz::Decode for TEEType {
             0 => Ok(TEEType::SEV),
             1 => Ok(TEEType::TDX),
             2 => Ok(TEEType::CCA),
-            _ => {
-                eprintln!("[WARNING] Invalid TEE type byte: {} (call #{}), defaulting to SEV",
-                          bytes[0],
-                          count + 1);
-                Ok(TEEType::SEV)
+            invalid_byte => {
+                eprintln!("[ERROR] Invalid TEE type byte: {}", invalid_byte);
+                Err(ssz::DecodeError::BytesInvalid(format!(
+                    "Invalid TEE type byte: {}. Expected 0 (SEV), 1 (TDX), or 2 (CCA)",
+                    invalid_byte
+                )))
             }
         }
     }

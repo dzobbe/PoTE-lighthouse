@@ -3,16 +3,47 @@ participants:
   - el_type: geth
     cl_type: lighthouse
     cl_image: docker.io/giobbe/poc-lighthouse
-    count: 2
-
+    validator_count: 5  # Number of validators for each node
+    count: 3
 
 network_params:
   network_id: "585858"
+# Genesis gas limit (in hex or decimal)
+  gas_limit: 30000000
+  # Seconds per slot
+  seconds_per_slot: 12
+  # Preloaded contracts with initial balances
+  additional_preloaded_contracts: |
+    {
+      "0x1000000000000000000000000000000000000001": {
+        "balance": "100000000000000000000000",
+        "comment": "Test account 1 (100K ETH)"
+      },
+      "0x2000000000000000000000000000000000000002": {
+        "balance": "100000000000000000000000",
+        "comment": "Test account 2 (100K ETH)"
+      },
+      "0x3000000000000000000000000000000000000003": {
+        "balance": "50000000000000000000000",
+        "comment": "Test account 3 (50K ETH)"
+      }
+    }
 
 # Point the package at our *custom* genesis generator (built with our SSZ)
 ethereum_genesis_generator_params:
   image: docker.io/giobbe/poc-ethereum-genesis-generator
-  extra_env: {TEE_VENDOR: 2}
+  #extra_env: {TEE_VENDOR: 0}
+  extra_env: {MNEMONICS_FILE: /mnemonics.yaml}
 
 additional_services:
   - dora
+  - blockscout
+
+# Custom dora configuration
+dora_params:
+  image: docker.io/giobbe/poc-dora
+
+# Blockscout configuration
+blockscout_params:
+  image: docker.io/blockscout/blockscout:latest
+  network_name: "POC Lighthouse Testnet"

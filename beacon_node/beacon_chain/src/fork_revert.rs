@@ -168,6 +168,11 @@ pub fn reset_fork_choice_to_finalization<E: EthSpec, Hot: ItemStore<E>, Cold: It
         complete_state_advance(&mut state, None, block.slot(), spec)
             .map_err(|e| format!("State advance failed: {:?}", e))?;
 
+        // Update the pubkey cache after state advance, as epoch processing may have added new validators
+        state
+            .update_pubkey_cache()
+            .map_err(|e| format!("Pubkey cache update failed: {:?}", e))?;
+
         let mut ctxt = ConsensusContext::new(block.slot())
             .set_proposer_index(block.message().proposer_index());
         per_block_processing(

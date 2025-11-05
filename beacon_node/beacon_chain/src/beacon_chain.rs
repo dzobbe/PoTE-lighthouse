@@ -5187,6 +5187,8 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
 
         drop(slot_timer);
 
+        // Update the pubkey cache after state advance, as epoch processing may have added new validators
+        state.update_pubkey_cache()?;
         state.build_committee_cache(RelativeEpoch::Current, &self.spec)?;
         state.apply_pending_mutations()?;
 

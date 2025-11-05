@@ -132,11 +132,11 @@ impl Validator {
     /// This replaces the staking balance check with TEE attestation verification
     pub fn has_valid_tee_attestation(&self, _spec: &ChainSpec) -> bool {
         use crate::attestation_service::AzureAttestationService;
-        use crate::tee_attestation::{SGXQuote, TEEAttestation};
+        use crate::tee_attestation::{TEEQuote, TEEAttestation};
         
         // Create a fake attestation quote
-        let fake_quote = SGXQuote {
-            quote_data: vec![0u8; 432], // Valid size for SGX quote
+        let fake_quote = TEEQuote {
+            quote_data: vec![0u8; 432], // Valid size for TEE quote
             version: 3,
         };
         

@@ -1299,13 +1299,81 @@ impl<E: EthSpec> BeaconState<E> {
         sync_committee: &SyncCommittee<E>,
     ) -> Result<Vec<usize>, Error> {
         self.update_pubkey_cache()?;
+        
+        // DEBUG: Log first few validator pubkeys and sync committee pubkeys
+        tracing::warn!(
+            "DEBUG: Validator count = {}, Pubkey cache len = {}, Sync committee size = {}",
+            self.validators().len(),
+            self.pubkey_cache().len(),
+            sync_committee.pubkeys.len()
+        );
+        
+        // Log first 3 validators for debugging
+        for (i, validator) in self.validators().iter().take(3).enumerate() {
+            tracing::warn!(
+                "DEBUG: Validator[{}] pubkey = {:?}, tee_type = {:?}",
+                i,
+                validator.pubkey,
+                validator.tee_type
+            );
+        }
+        
+        // Log ALL sync committee pubkeys that are NOT in cache
+        for (i, pubkey) in sync_committee.pubkeys.iter().enumerate() {
+            if self.pubkey_cache().get(pubkey).is_none() {
+                tracing::error!(
+                    "DEBUG: SyncCommittee[{}] pubkey = {:?} NOT IN CACHE!",
+                    i,
+                    pubkey
+                );
+                // Try to find this pubkey in the validator list manually
+                let mut found_at_index = None;
+                for (v_idx, validator) in self.validators().iter().enumerate() {
+                    if validator.pubkey == *pubkey {
+                        found_at_index = Some(v_idx);
+                        break;
+                    }
+                }
+                if let Some(idx) = found_at_index {
+                    tracing::error!(
+                        "DEBUG: Found pubkey in validators at index {}, but NOT in cache! Cache has index: {:?}",
+                        idx,
+                        self.pubkey_cache().get(pubkey)
+                    );
+                } else {
+                    tracing::error!(
+                        "DEBUG: Pubkey {} DOES NOT EXIST in validator registry at all!",
+                        pubkey
+                    );
+                }
+            }
+        }
+        
+        // Log first 3 sync committee pubkeys that ARE in cache
+        for (i, pubkey) in sync_committee.pubkeys.iter().take(3).enumerate() {
+            tracing::warn!(
+                "DEBUG: SyncCommittee[{}] pubkey = {:?}, in_cache = {}",
+                i,
+                pubkey,
+                self.pubkey_cache().get(pubkey).is_some()
+            );
+        }
+        
         sync_committee
             .pubkeys
             .iter()
             .map(|pubkey| {
                 self.pubkey_cache()
                     .get(pubkey)
-                    .ok_or(Error::PubkeyCacheInconsistent)
+                    .ok_or_else(|| {
+                        tracing::error!(
+                            pubkey = ?pubkey,
+                            cache_len = self.pubkey_cache().len(),
+                            validators_len = self.validators().len(),
+                            "PubkeyCacheInconsistent: sync committee pubkey not found in cache"
+                        );
+                        Error::PubkeyCacheInconsistent
+                    })
             })
             .collect()
     }
@@ -1846,6 +1914,13 @@ impl<E: EthSpec> BeaconState<E> {
         if pubkey_cache.len() == index {
             let success = pubkey_cache.insert(pubkey, index);
             if !success {
+                tracing::error!(
+                    pubkey = ?pubkey,
+                    validator_index = index,
+                    cache_len = pubkey_cache.len(),
+                    validators_len = self.validators().len(),
+                    "PubkeyCacheInconsistent: failed to insert new validator pubkey (duplicate pubkey?)"
+                );
                 return Err(Error::PubkeyCacheInconsistent);
             }
         }
@@ -2258,11 +2333,36 @@ impl<E: EthSpec> BeaconState<E> {
     pub fn update_pubkey_cache(&mut self) -> Result<(), Error> {
         let mut pubkey_cache = mem::take(self.pubkey_cache_mut());
         let start_index = pubkey_cache.len();
+        let validators_len = self.validators().len();
+
+        tracing::debug!(
+            cache_len = start_index,
+            validators_len = validators_len,
+            validators_to_add = validators_len.saturating_sub(start_index),
+            "Updating pubkey cache"
+        );
 
         for (i, validator) in self.validators().iter_from(start_index)?.enumerate() {
             let index = start_index.safe_add(i)?;
             let success = pubkey_cache.insert(validator.pubkey, index);
             if !success {
+                tracing::error!(
+                    pubkey = ?validator.pubkey,
+                    validator_index = index,
+                    start_index = start_index,
+                    iteration = i,
+                    cache_len_before = start_index,
+                    validators_len = self.validators().len(),
+                    "PubkeyCacheInconsistent: failed to insert validator pubkey during cache update (duplicate pubkey in registry?)"
+                );
+                // Check if pubkey already exists at a different index
+                if let Some(existing_index) = pubkey_cache.get(&validator.pubkey) {
+                    tracing::error!(
+                        existing_index = existing_index,
+                        attempted_index = index,
+                        "Pubkey already exists in cache at different index"
+                    );
+                }
                 return Err(Error::PubkeyCacheInconsistent);
             }
         }

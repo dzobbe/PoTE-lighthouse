@@ -93,7 +93,7 @@ use std::sync::Arc;
 use store::{Error as DBError, KeyValueStore};
 use strum::AsRefStr;
 use task_executor::JoinHandle;
-use tracing::{Instrument, Span, debug, debug_span, error, info_span, instrument};
+use tracing::{Instrument, Span, debug, debug_span, error, info_span, instrument, warn};
 use types::{
     BeaconBlockRef, BeaconState, BeaconStateError, BlobsList, ChainSpec, DataColumnSidecarList,
     Epoch, EthSpec, ExecutionBlockHash, FullPayload, Hash256, InconsistentFork, KzgProofs,
@@ -1030,6 +1030,38 @@ impl<T: BeaconChainTypes> GossipVerifiedBlock<T> {
             });
         }
 
+        // Verify TEE attestation of the block proposer
+        // Get the block header to access TEE information
+        let block_header = block.message().block_header();
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        
+        // Use mock verification function (always returns true for now)
+        use types::attestation_service::verify_tee_attestation_mock;
+        let tee_verification_valid = verify_tee_attestation_mock(
+            &block_header.proposer_tee_type,
+            &block_header.proposer_tee_attestation,
+            current_time,
+        );
+        
+        if !tee_verification_valid {
+            warn!(
+                "Block TEE attestation verification failed for proposer {}",
+                block.message().proposer_index()
+            );
+            // For now, we don't fail the block on TEE verification failure
+            // TODO: Enable strict TEE verification once real attestation is implemented
+            // return Err(BlockError::InvalidTeeAttestation);
+        } else {
+            debug!(
+                "Block TEE attestation verified successfully for proposer {} with TEE type: {}",
+                block.message().proposer_index(),
+                block_header.proposer_tee_type.as_str()
+            );
+        }
+
         // Validate the block's execution_payload (if any).
         validate_execution_payload_for_gossip(&parent_block, block.message(), chain)?;
 
@@ -1553,6 +1585,8 @@ impl<T: BeaconChainTypes> ExecutionPendingBlock<T> {
 
         let committee_timer = metrics::start_timer(&metrics::BLOCK_PROCESSING_COMMITTEE);
 
+        // Update the pubkey cache after state advance, as epoch processing may have added new validators
+        state.update_pubkey_cache()?;
         state.build_all_committee_caches(&chain.spec)?;
 
         metrics::stop_timer(committee_timer);

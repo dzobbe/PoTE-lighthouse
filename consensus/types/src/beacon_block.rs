@@ -271,6 +271,8 @@ impl<'a, E: EthSpec, Payload: AbstractExecPayload<E>> BeaconBlockRef<'a, E, Payl
             parent_root: self.parent_root(),
             state_root: self.state_root(),
             body_root: self.body_root(),
+            proposer_tee_type: BeaconBlockHeader::placeholder_tee_type(),
+            proposer_tee_attestation: BeaconBlockHeader::create_placeholder_tee_attestation(),
         }
     }
 
@@ -278,6 +280,8 @@ impl<'a, E: EthSpec, Payload: AbstractExecPayload<E>> BeaconBlockRef<'a, E, Payl
     pub fn temporary_block_header(self) -> BeaconBlockHeader {
         BeaconBlockHeader {
             state_root: Hash256::zero(),
+            proposer_tee_type: BeaconBlockHeader::placeholder_tee_type(),
+            proposer_tee_attestation: BeaconBlockHeader::create_placeholder_tee_attestation(),
             ..self.block_header()
         }
     }
@@ -333,6 +337,8 @@ impl<E: EthSpec, Payload: AbstractExecPayload<E>> BeaconBlockBase<E, Payload> {
             parent_root: Hash256::zero(),
             state_root: Hash256::zero(),
             body_root: Hash256::zero(),
+            proposer_tee_type: BeaconBlockHeader::placeholder_tee_type(),
+            proposer_tee_attestation: BeaconBlockHeader::create_placeholder_tee_attestation(),
         };
 
         let signed_header = SignedBeaconBlockHeader {

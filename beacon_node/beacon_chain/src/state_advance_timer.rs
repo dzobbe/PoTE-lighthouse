@@ -356,6 +356,10 @@ fn advance_head<T: BeaconChainTypes>(beacon_chain: &Arc<BeaconChain<T>>) -> Resu
         "Advanced head state one slot"
     );
 
+    // Update the pubkey cache after state advance, as epoch processing may have added new validators
+    state
+        .update_pubkey_cache()
+        .map_err(BeaconChainError::from)?;
     // Build the current epoch cache, to prepare to compute proposer duties.
     state
         .build_committee_cache(RelativeEpoch::Current, &beacon_chain.spec)
