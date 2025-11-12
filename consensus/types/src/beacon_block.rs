@@ -1,7 +1,7 @@
 use crate::attestation::AttestationBase;
+use crate::tee_types::TEEType;
 use crate::test_utils::TestRandom;
 use crate::*;
-use crate::tee_types::TEEType;
 use derivative::Derivative;
 use serde::{Deserialize, Deserializer, Serialize};
 use ssz::{Decode, DecodeError};
@@ -272,7 +272,7 @@ impl<'a, E: EthSpec, Payload: AbstractExecPayload<E>> BeaconBlockRef<'a, E, Payl
             state_root: self.state_root(),
             body_root: self.body_root(),
             proposer_tee_type: BeaconBlockHeader::placeholder_tee_type(),
-            proposer_tee_attestation: BeaconBlockHeader::create_placeholder_tee_attestation(),
+            proposer_tee_quote: BeaconBlockHeader::create_placeholder_tee_quote(),
         }
     }
 
@@ -281,7 +281,7 @@ impl<'a, E: EthSpec, Payload: AbstractExecPayload<E>> BeaconBlockRef<'a, E, Payl
         BeaconBlockHeader {
             state_root: Hash256::zero(),
             proposer_tee_type: BeaconBlockHeader::placeholder_tee_type(),
-            proposer_tee_attestation: BeaconBlockHeader::create_placeholder_tee_attestation(),
+            proposer_tee_quote: BeaconBlockHeader::create_placeholder_tee_quote(),
             ..self.block_header()
         }
     }
@@ -338,7 +338,7 @@ impl<E: EthSpec, Payload: AbstractExecPayload<E>> BeaconBlockBase<E, Payload> {
             state_root: Hash256::zero(),
             body_root: Hash256::zero(),
             proposer_tee_type: BeaconBlockHeader::placeholder_tee_type(),
-            proposer_tee_attestation: BeaconBlockHeader::create_placeholder_tee_attestation(),
+            proposer_tee_quote: BeaconBlockHeader::create_placeholder_tee_quote(),
         };
 
         let signed_header = SignedBeaconBlockHeader {

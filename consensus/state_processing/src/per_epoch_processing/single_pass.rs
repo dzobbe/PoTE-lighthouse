@@ -246,7 +246,8 @@ pub fn process_epoch_single_pass<E: EthSpec>(
         let is_active_current_epoch = validator.is_active_at(current_epoch);
         let is_active_previous_epoch = validator.is_active_at(previous_epoch);
         let is_eligible = is_active_previous_epoch
-            || (validator.is_slashed() && previous_epoch.safe_add(1)? < validator.withdrawable_epoch);
+            || (validator.is_slashed()
+                && previous_epoch.safe_add(1)? < validator.withdrawable_epoch);
 
         let base_reward = if is_eligible {
             epoch_cache.get_base_reward(index)?
@@ -916,7 +917,8 @@ fn process_single_slashing(
     state_ctxt: &StateContext,
     spec: &ChainSpec,
 ) -> Result<(), Error> {
-    if validator.is_slashed() && slashings_ctxt.target_withdrawable_epoch == validator.withdrawable_epoch
+    if validator.is_slashed()
+        && slashings_ctxt.target_withdrawable_epoch == validator.withdrawable_epoch
     {
         let increment = spec.effective_balance_increment;
         let penalty = if state_ctxt.fork_name.electra_enabled() {

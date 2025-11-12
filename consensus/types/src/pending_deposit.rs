@@ -1,6 +1,6 @@
+use crate::tee_types::TEEType;
 use crate::test_utils::TestRandom;
 use crate::*;
-use crate::tee_types::TEEType;
 use serde::{Deserialize, Serialize};
 use ssz_derive::{Decode, Encode};
 use test_random_derive::TestRandom;

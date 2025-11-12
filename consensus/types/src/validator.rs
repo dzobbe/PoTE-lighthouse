@@ -1,7 +1,7 @@
 use crate::context_deserialize;
 use crate::{
     Address, BeaconState, ChainSpec, Checkpoint, Epoch, EthSpec, FixedBytesExtended, ForkName,
-    Hash256, PublicKeyBytes, test_utils::TestRandom, tee_types::TEEType,
+    Hash256, PublicKeyBytes, tee_types::TEEType, test_utils::TestRandom,
 };
 use serde::{Deserialize, Serialize};
 use ssz_derive::{Decode, Encode};
@@ -132,23 +132,18 @@ impl Validator {
     /// This replaces the staking balance check with TEE attestation verification
     pub fn has_valid_tee_attestation(&self, _spec: &ChainSpec) -> bool {
         use crate::attestation_service::AzureAttestationService;
-        use crate::tee_attestation::{TEEQuote, TEEAttestation};
-        
-        // Create a fake attestation quote
-        let fake_quote = TEEQuote {
-            quote_data: vec![0u8; 432], // Valid size for TEE quote
-            version: 3,
-        };
-        
-        let attestation = TEEAttestation::new(fake_quote, u64::MAX);
-        
+        use crate::tee_attestation::{TEEQuote, TEE_QUOTE_SIZE};
+
+        // Create a fake attestation quote (fixed-size buffer filled with zeros)
+        let attestation_quote = TEEQuote::from_bytes([0u8; TEE_QUOTE_SIZE]);
+
         // Create mock attestation service
         let service = AzureAttestationService::new_mock();
-        
+
         // Use tokio runtime to run async verification
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(service.verify_attestation(&attestation, 0));
-        
+        let result = rt.block_on(service.verify_quote_with_attestation_service(&attestation_quote));
+
         result.is_valid
     }
 
@@ -428,7 +423,7 @@ mod tests {
         // Test that the validator can check TEE attestation
         // This will call the mock HTTP server (which will fail and fall back to acceptance)
         let has_valid_attestation = v.has_valid_tee_attestation(&spec);
-        
+
         // The fallback behavior should accept the attestation
         assert!(has_valid_attestation);
     }

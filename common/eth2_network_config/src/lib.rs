@@ -248,10 +248,22 @@ impl Eth2NetworkConfig {
         let spec = self.chain_spec::<E>()?;
         self.genesis_state_bytes
             .as_ref()
-            .map(|bytes| {
-                BeaconState::from_ssz_bytes(bytes.as_ref(), &spec)
-                    .map_err(|e| format!("Built-in genesis state SSZ bytes are invalid: {:?}", e))
-            })
+            .map(
+                |bytes| match BeaconState::from_ssz_bytes(bytes.as_ref(), &spec) {
+                    Ok(state) => Ok(state),
+                    Err(e) => {
+                        tracing::warn!(
+                            error = ?e,
+                            bytes_len = bytes.as_ref().len(),
+                            "Built-in genesis state SSZ bytes failed to decode",
+                        );
+                        Err(format!(
+                            "Built-in genesis state SSZ bytes are invalid: {:?}",
+                            e
+                        ))
+                    }
+                },
+            )
             .ok_or("Genesis state bytes missing from Eth2NetworkConfig")?
     }
 
@@ -502,7 +514,6 @@ mod tests {
         let config = Eth2NetworkConfig::from_hardcoded_net(&MAINNET).unwrap();
         config
             .genesis_state::<E>(None, Duration::from_secs(1))
-            .await
             .expect("beacon state can decode");
     }
 

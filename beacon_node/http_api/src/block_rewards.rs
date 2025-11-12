@@ -157,9 +157,7 @@ pub fn compute_block_rewards<T: BeaconChainTypes>(
 
             let mut state = block_replayer.into_state();
             // Update the pubkey cache after state advance, as epoch processing may have added new validators
-            state
-                .update_pubkey_cache()
-                .map_err(beacon_state_error)?;
+            state.update_pubkey_cache().map_err(beacon_state_error)?;
             state
                 .build_all_committee_caches(&chain.spec)
                 .map_err(beacon_state_error)?;

@@ -144,7 +144,7 @@ pub fn block(slot: u64, proposer_index: u64, block_root: u64) -> SignedBeaconBlo
             state_root: Hash256::zero(),
             body_root: Hash256::from_low_u64_be(block_root),
             proposer_tee_type: BeaconBlockHeader::placeholder_tee_type(),
-            proposer_tee_attestation: BeaconBlockHeader::create_placeholder_tee_attestation(),
+            proposer_tee_quote: BeaconBlockHeader::create_placeholder_tee_quote(),
         },
         signature: Signature::empty(),
     }

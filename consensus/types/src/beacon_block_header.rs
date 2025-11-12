@@ -1,12 +1,15 @@
+use crate::tee_attestation::{TEEQuote, TEE_QUOTE_SIZE};
+use crate::tee_types::TEEType;
 use crate::test_utils::TestRandom;
 use crate::*;
-use crate::tee_types::TEEType;
-use crate::tee_attestation::TEEAttestation;
 
 use context_deserialize::context_deserialize;
 use serde::{Deserialize, Serialize};
-use ssz_derive::{Decode, Encode};
+use ssz::DecodeError;
+use ssz_derive::Encode;
+use ssz_types::VariableList;
 use test_random_derive::TestRandom;
+use typenum::U8192;
 use tree_hash::TreeHash;
 use tree_hash_derive::TreeHash;
 
@@ -16,7 +19,7 @@ use tree_hash_derive::TreeHash;
 /// Extended with TEE (Trusted Execution Environment) information for multi-vendor TEE consensus
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(
-    Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize, Encode, Decode, TreeHash, TestRandom,
+    Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize, Encode, TreeHash, TestRandom,
 )]
 #[context_deserialize(ForkName)]
 pub struct BeaconBlockHeader {
@@ -28,8 +31,8 @@ pub struct BeaconBlockHeader {
     pub body_root: Hash256,
     /// TEE type of the validator proposing this block (SEV, TDX, or CCA)
     pub proposer_tee_type: TEEType,
-    /// TEE attestation quote from the proposer's TEE
-    pub proposer_tee_attestation: TEEAttestation,
+    /// Fixed-size attestation quote provided by the proposer (8 KiB base64 payload).
+    pub proposer_tee_quote: TEEQuote,
 }
 
 impl SignedRoot for BeaconBlockHeader {}
@@ -61,45 +64,172 @@ impl BeaconBlockHeader {
     }
 
     pub fn empty() -> Self {
-        use crate::tee_attestation::TEEQuote;
-        
-        // Create a placeholder TEE attestation for empty header
-        let placeholder_quote = TEEQuote {
-            quote_data: vec![0u8; 432], // Standard TEE quote size
-            version: 3,
-        };
-        
         Self {
             body_root: Default::default(),
             parent_root: Default::default(),
             proposer_index: Default::default(),
             slot: Default::default(),
             state_root: Default::default(),
-            proposer_tee_type: TEEType::SEV, // Default to SEV
-            proposer_tee_attestation: TEEAttestation::new(placeholder_quote, u64::MAX),
+            proposer_tee_type: TEEType::SEV,
+            proposer_tee_quote: TEEQuote::default(),
         }
     }
-    
-    /// Creates a placeholder TEE attestation for block production
-    /// In production, this should be replaced with actual TEE attestation generation
-    pub fn create_placeholder_tee_attestation() -> TEEAttestation {
-        use crate::tee_attestation::TEEQuote;
-        
-        // TODO: Replace with actual TEE attestation generation
-        let placeholder_quote = TEEQuote {
-            quote_data: vec![0xAA; 432], // Placeholder data
-            version: 3,
-        };
-        
-        TEEAttestation::new(placeholder_quote, u64::MAX)
+
+    /// Creates a placeholder quote for block production.
+    /// In production, this should be replaced with real attestation generation.
+    pub fn create_placeholder_tee_quote() -> TEEQuote {
+        TEEQuote::from_bytes([0xAA; TEE_QUOTE_SIZE])
     }
-    
+
     /// Gets a placeholder TEE type for testing/development
     /// In production, this should be determined from the validator's actual TEE
     pub fn placeholder_tee_type() -> TEEType {
         // TODO: Rotate between different TEE types for testing
         TEEType::TDX
     }
+}
+
+#[derive(ssz_derive::Decode)]
+struct BeaconBlockHeaderSsz {
+    slot: Slot,
+    proposer_index: u64,
+    parent_root: Hash256,
+    state_root: Hash256,
+    body_root: Hash256,
+    proposer_tee_type: TEEType,
+    proposer_tee_quote: TEEQuote,
+}
+
+#[derive(ssz_derive::Decode)]
+struct BeaconBlockHeaderVariable {
+    slot: Slot,
+    proposer_index: u64,
+    parent_root: Hash256,
+    state_root: Hash256,
+    body_root: Hash256,
+    proposer_tee_type: TEEType,
+    proposer_tee_quote: VariableList<u8, U8192>,
+}
+
+impl From<BeaconBlockHeaderSsz> for BeaconBlockHeader {
+    fn from(value: BeaconBlockHeaderSsz) -> Self {
+        Self {
+            slot: value.slot,
+            proposer_index: value.proposer_index,
+            parent_root: value.parent_root,
+            state_root: value.state_root,
+            body_root: value.body_root,
+            proposer_tee_type: value.proposer_tee_type,
+            proposer_tee_quote: value.proposer_tee_quote,
+        }
+    }
+}
+
+impl From<BeaconBlockHeaderVariable> for BeaconBlockHeader {
+    fn from(value: BeaconBlockHeaderVariable) -> Self {
+        let quote_bytes = if value.proposer_tee_quote.is_empty() {
+            TEEQuote::default()
+        } else {
+            let slice = value.proposer_tee_quote.as_ref();
+            if slice.len() != TEE_QUOTE_SIZE {
+                tracing::warn!(
+                    "TEE quote length {} differs from expected {}; padding/truncating",
+                    slice.len(),
+                    TEE_QUOTE_SIZE
+                );
+            }
+            let mut array = [0u8; TEE_QUOTE_SIZE];
+            let copy_len = slice.len().min(TEE_QUOTE_SIZE);
+            array[..copy_len].copy_from_slice(&slice[..copy_len]);
+            TEEQuote::from_bytes(array)
+        };
+
+        BeaconBlockHeader {
+            slot: value.slot,
+            proposer_index: value.proposer_index,
+            parent_root: value.parent_root,
+            state_root: value.state_root,
+            body_root: value.body_root,
+            proposer_tee_type: value.proposer_tee_type,
+            proposer_tee_quote: quote_bytes,
+        }
+    }
+}
+
+const EXTENDED_HEADER_BYTES: usize = 8 + 8 + 32 * 3 + 1 + TEE_QUOTE_SIZE;
+
+impl ssz::Decode for BeaconBlockHeader {
+    fn is_ssz_fixed_len() -> bool {
+        true
+    }
+
+    fn ssz_fixed_len() -> usize {
+        EXTENDED_HEADER_BYTES
+    }
+
+    fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
+        const LEGACY_LEN: usize = 112;
+
+        match BeaconBlockHeaderSsz::from_ssz_bytes(bytes) {
+            Ok(header) => Ok(header.into()),
+            Err(err) => {
+                if matches!(err, DecodeError::OffsetIntoFixedPortion(_)) {
+                    if let Ok(variable_header) = BeaconBlockHeaderVariable::from_ssz_bytes(bytes) {
+                        return Ok(variable_header.into());
+                    }
+                }
+                if bytes.len() == LEGACY_LEN {
+                    tracing::warn!("Decoding legacy beacon block header");
+                    return decode_legacy_header(bytes).map_err(|_| err);
+                }
+                Err(err)
+            }
+        }
+    }
+}
+
+fn decode_legacy_header(bytes: &[u8]) -> Result<BeaconBlockHeader, DecodeError> {
+    use std::convert::TryInto;
+
+    const LEGACY_LEN: usize = 112;
+    if bytes.len() != LEGACY_LEN {
+        return Err(DecodeError::InvalidByteLength {
+            len: bytes.len(),
+            expected: LEGACY_LEN,
+        });
+    }
+
+    let slot_bytes: [u8; 8] = bytes[0..8]
+        .try_into()
+        .map_err(|_| DecodeError::BytesInvalid("invalid slot length".into()))?;
+    let proposer_index_bytes: [u8; 8] = bytes[8..16]
+        .try_into()
+        .map_err(|_| DecodeError::BytesInvalid("invalid proposer_index length".into()))?;
+
+    let slot = Slot::new(u64::from_le_bytes(slot_bytes));
+    let proposer_index = u64::from_le_bytes(proposer_index_bytes);
+    let parent_root = Hash256::from(
+        <[u8; 32]>::try_from(&bytes[16..48])
+            .map_err(|_| DecodeError::BytesInvalid("invalid parent_root length".into()))?,
+    );
+    let state_root = Hash256::from(
+        <[u8; 32]>::try_from(&bytes[48..80])
+            .map_err(|_| DecodeError::BytesInvalid("invalid state_root length".into()))?,
+    );
+    let body_root = Hash256::from(
+        <[u8; 32]>::try_from(&bytes[80..112])
+            .map_err(|_| DecodeError::BytesInvalid("invalid body_root length".into()))?,
+    );
+
+    Ok(BeaconBlockHeader {
+        slot,
+        proposer_index,
+        parent_root,
+        state_root,
+        body_root,
+        proposer_tee_type: TEEType::SEV,
+        proposer_tee_quote: TEEQuote::default(),
+    })
 }
 
 #[cfg(test)]

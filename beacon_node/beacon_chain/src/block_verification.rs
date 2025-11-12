@@ -1033,19 +1033,13 @@ impl<T: BeaconChainTypes> GossipVerifiedBlock<T> {
         // Verify TEE attestation of the block proposer
         // Get the block header to access TEE information
         let block_header = block.message().block_header();
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        
         // Use mock verification function (always returns true for now)
         use types::attestation_service::verify_tee_attestation_mock;
         let tee_verification_valid = verify_tee_attestation_mock(
             &block_header.proposer_tee_type,
-            &block_header.proposer_tee_attestation,
-            current_time,
+            &block_header.proposer_tee_quote,
         );
-        
+
         if !tee_verification_valid {
             warn!(
                 "Block TEE attestation verification failed for proposer {}",

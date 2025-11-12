@@ -1,150 +1,221 @@
-use serde::{Deserialize, Serialize};
-use ssz_derive::{Decode, Encode};
 use crate::test_utils::TestRandom;
+use serde::de::{Error as DeError, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use ssz::{Decode, DecodeError, Encode};
+use std::fmt;
 use std::hash::{Hash, Hasher};
-use tree_hash::TreeHash;
+use tree_hash_derive::TreeHash;
 
-/// Generic TEE Quote structure for remote attestation
-/// This represents the evidence provided by any TEE (SEV, TDX, CCA, etc.)
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
+/// Fixed size in bytes for an attestation quote included in a block header.
+pub const TEE_QUOTE_SIZE: usize = 8192;
+
+/// Raw quote bytes extracted from the proposer's attestation.
+#[derive(Debug, Clone, PartialEq, Eq, TreeHash)]
 pub struct TEEQuote {
-    /// The TEE quote data (size varies by TEE type: typically 432 bytes for SGX-like attestations)
-    pub quote_data: Vec<u8>,
-    /// The version of the attestation format
-    pub version: u16,
+    /// The raw quote bytes in binary form. Length is always `TEE_QUOTE_SIZE`.
+    pub bytes: [u8; TEE_QUOTE_SIZE],
+}
+
+impl Default for TEEQuote {
+    fn default() -> Self {
+        Self {
+            bytes: [0u8; TEE_QUOTE_SIZE],
+        }
+    }
 }
 
 impl Hash for TEEQuote {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.quote_data.hash(state);
-        self.version.hash(state);
+        self.bytes.hash(state);
     }
 }
 
-impl TreeHash for TEEQuote {
-    fn tree_hash_type() -> tree_hash::TreeHashType {
-        tree_hash::TreeHashType::List
+impl Serialize for TEEQuote {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(&self.bytes)
+    }
+}
+
+impl<'de> Deserialize<'de> for TEEQuote {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct QuoteVisitor;
+
+        impl<'de> Visitor<'de> for QuoteVisitor {
+            type Value = TEEQuote;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                write!(
+                    formatter,
+                    "a {}-byte attestation quote or base64 string",
+                    TEE_QUOTE_SIZE
+                )
+            }
+
+            fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+            where
+                E: DeError,
+            {
+                if v.len() != TEE_QUOTE_SIZE {
+                    return Err(E::invalid_length(v.len(), &self));
+                }
+                let mut bytes = [0u8; TEE_QUOTE_SIZE];
+                bytes.copy_from_slice(v);
+                Ok(TEEQuote { bytes })
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut bytes = [0u8; TEE_QUOTE_SIZE];
+                for idx in 0..TEE_QUOTE_SIZE {
+                    let value: Option<u8> = seq.next_element()?;
+                    let value = value.ok_or_else(|| DeError::invalid_length(idx, &self))?;
+                    bytes[idx] = value;
+                }
+                if seq.next_element::<u8>()?.is_some() {
+                    return Err(DeError::invalid_length(TEE_QUOTE_SIZE + 1, &self));
+                }
+                Ok(TEEQuote { bytes })
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: DeError,
+            {
+                let decoded =
+                    base64::decode(v).map_err(|e| DeError::custom(format!("base64 error: {e}")))?;
+                self.visit_bytes(&decoded)
+            }
+        }
+
+        deserializer.deserialize_bytes(QuoteVisitor)
+    }
+}
+
+impl Encode for TEEQuote {
+    fn is_ssz_fixed_len() -> bool {
+        true
     }
 
-    fn tree_hash_packed_encoding(&self) -> smallvec::SmallVec<[u8; 32]> {
-        unreachable!("List should never be packed.")
+    fn ssz_fixed_len() -> usize {
+        TEE_QUOTE_SIZE
     }
 
-    fn tree_hash_packing_factor() -> usize {
-        unreachable!("List should never be packed.")
+    fn ssz_bytes_len(&self) -> usize {
+        TEE_QUOTE_SIZE
     }
 
-    fn tree_hash_root(&self) -> tree_hash::Hash256 {
-        // Hash the quote_data and version together
-        let mut bytes = self.quote_data.clone();
-        bytes.extend_from_slice(&self.version.to_le_bytes());
-        tree_hash::Hash256::from_slice(&ethereum_hashing::hash(&bytes))
+    fn ssz_append(&self, buf: &mut Vec<u8>) {
+        buf.extend_from_slice(&self.bytes);
+    }
+}
+
+impl Decode for TEEQuote {
+    fn is_ssz_fixed_len() -> bool {
+        true
+    }
+
+    fn ssz_fixed_len() -> usize {
+        TEE_QUOTE_SIZE
+    }
+
+    fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
+        if bytes.is_empty() {
+            // Allow empty payloads for backwards compatibility with legacy genesis artifacts.
+            tracing::warn!(
+                "TEE quote SSZ payload is empty; defaulting to zeroed attestation bytes"
+            );
+            return Ok(TEEQuote::default());
+        }
+        if bytes.len() != TEE_QUOTE_SIZE {
+            return Err(DecodeError::InvalidByteLength {
+                len: bytes.len(),
+                expected: TEE_QUOTE_SIZE,
+            });
+        }
+        let mut array = [0u8; TEE_QUOTE_SIZE];
+        array.copy_from_slice(bytes);
+        Ok(TEEQuote { bytes: array })
+    }
+}
+
+impl TEEQuote {
+    /// Construct a quote from raw bytes. Length must be exactly `TEE_QUOTE_SIZE`.
+    pub fn from_bytes(bytes: [u8; TEE_QUOTE_SIZE]) -> Self {
+        Self { bytes }
+    }
+
+    /// Decode a base64-encoded representation of the quote.
+    pub fn from_base64(encoded: &str) -> Result<Self, TEEQuoteError> {
+        let decoded = base64::decode(encoded).map_err(TEEQuoteError::Base64Decoding)?;
+        if decoded.len() != TEE_QUOTE_SIZE {
+            return Err(TEEQuoteError::InvalidLength {
+                expected: TEE_QUOTE_SIZE,
+                actual: decoded.len(),
+            });
+        }
+        let mut bytes = [0u8; TEE_QUOTE_SIZE];
+        bytes.copy_from_slice(&decoded);
+        Ok(Self { bytes })
+    }
+
+    /// Encode the quote to a base64 string.
+    pub fn to_base64(&self) -> String {
+        base64::encode(self.bytes)
+    }
+
+    /// Returns a reference to the raw bytes.
+    pub fn as_bytes(&self) -> &[u8; TEE_QUOTE_SIZE] {
+        &self.bytes
     }
 }
 
 impl TestRandom for TEEQuote {
     fn random_for_test(rng: &mut impl rand::RngCore) -> Self {
-        let mut quote_data = vec![0u8; 432];
-        rng.fill_bytes(&mut quote_data);
-        Self {
-            quote_data,
-            version: (rng.next_u32() % 10) as u16,
-        }
+        let mut bytes = [0u8; TEE_QUOTE_SIZE];
+        rng.fill_bytes(&mut bytes);
+        Self { bytes }
     }
 }
 
-/// Attestation verification result
+/// Simple attestation verification result structure, retained for mock verification flows.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AttestationResult {
-    /// Whether the attestation is valid
+    /// Whether the the attestation is considered valid.
     pub is_valid: bool,
-    /// Optional MRENCLAVE (measurement of the enclave)
+    /// Optional mock MRENCLAVE (measurement of the enclave).
     pub mrenclave: Option<[u8; 32]>,
-    /// Optional MRSIGNER (measurement of the signer)
+    /// Optional mock MRSIGNER (measurement of the signer).
     pub mrsigner: Option<[u8; 32]>,
-    /// Error message if verification failed
+    /// Optional error message if verification failed.
     pub error_message: Option<String>,
 }
 
-/// Represents a validator's TEE attestation status
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
-pub struct TEEAttestation {
-    /// The TEE quote providing evidence of trusted execution environment
-    pub tee_quote: TEEQuote,
-    /// Timestamp of when attestation was created
-    pub created_at: u64,
-    /// Timestamp of when attestation expires
-    pub expires_at: u64,
-    /// Optional signature over the quote
-    pub signature: Option<Vec<u8>>,
+/// Errors that can occur while working with fixed-size TEE quotes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TEEQuoteError {
+    /// Base64 decoding failed.
+    Base64Decoding(base64::DecodeError),
+    /// Decoded data does not match the required length.
+    InvalidLength { expected: usize, actual: usize },
 }
 
-impl Hash for TEEAttestation {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.tee_quote.hash(state);
-        self.created_at.hash(state);
-        self.expires_at.hash(state);
-        self.signature.hash(state);
-    }
-}
-
-impl TreeHash for TEEAttestation {
-    fn tree_hash_type() -> tree_hash::TreeHashType {
-        tree_hash::TreeHashType::Container
-    }
-
-    fn tree_hash_packed_encoding(&self) -> smallvec::SmallVec<[u8; 32]> {
-        unreachable!("Container should never be packed.")
-    }
-
-    fn tree_hash_packing_factor() -> usize {
-        unreachable!("Container should never be packed.")
-    }
-
-    fn tree_hash_root(&self) -> tree_hash::Hash256 {
-        // Combine all fields for hashing
-        let quote_hash = self.tee_quote.tree_hash_root();
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(&quote_hash[..]);
-        bytes.extend_from_slice(&self.created_at.to_le_bytes());
-        bytes.extend_from_slice(&self.expires_at.to_le_bytes());
-        if let Some(sig) = &self.signature {
-            bytes.extend_from_slice(sig);
-        }
-        tree_hash::Hash256::from_slice(&ethereum_hashing::hash(&bytes))
-    }
-}
-
-impl TestRandom for TEEAttestation {
-    fn random_for_test(rng: &mut impl rand::RngCore) -> Self {
-        Self {
-            tee_quote: TEEQuote::random_for_test(rng),
-            created_at: rng.next_u64(),
-            expires_at: rng.next_u64(),
-            signature: if rng.next_u32() % 2 == 0 {
-                let mut sig = vec![0u8; 64];
-                rng.fill_bytes(&mut sig);
-                Some(sig)
-            } else {
-                None
-            },
+impl fmt::Display for TEEQuoteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TEEQuoteError::Base64Decoding(err) => write!(f, "failed to decode base64 quote: {err}"),
+            TEEQuoteError::InvalidLength { expected, actual } => {
+                write!(f, "invalid quote length: expected {expected}, got {actual}")
+            }
         }
     }
 }
 
-impl TEEAttestation {
-    /// Create a new TEE attestation
-    pub fn new(tee_quote: TEEQuote, expires_at: u64) -> Self {
-        Self {
-            tee_quote,
-            created_at: 0, // Will be set by the system
-            expires_at,
-            signature: None,
-        }
-    }
-
-    /// Check if the attestation is currently valid (not expired)
-    pub fn is_not_expired(&self, current_time: u64) -> bool {
-        current_time < self.expires_at
-    }
-}
+impl std::error::Error for TEEQuoteError {}

@@ -2,9 +2,9 @@ use self::committee_cache::get_active_validator_indices;
 use crate::ContextDeserialize;
 use crate::FixedBytesExtended;
 use crate::historical_summary::HistoricalSummary;
+use crate::tee_types::{TEECommittee, TEEType, TEEValidator, TEEValidatorSelection};
 use crate::test_utils::TestRandom;
 use crate::*;
-use crate::tee_types::{TEEValidator, TEEValidatorSelection, TEECommittee, TEEType};
 use compare_fields::CompareFields;
 use compare_fields_derive::CompareFields;
 use derivative::Derivative;
@@ -979,11 +979,15 @@ impl<E: EthSpec> BeaconState<E> {
         }
 
         // Group validators by TEE vendor
-        let mut vendor_groups: std::collections::HashMap<TEEType, Vec<usize>> = std::collections::HashMap::new();
-        
+        let mut vendor_groups: std::collections::HashMap<TEEType, Vec<usize>> =
+            std::collections::HashMap::new();
+
         for &index in indices {
             if let Ok(validator) = self.get_validator(index) {
-                vendor_groups.entry(validator.tee_type.clone()).or_insert_with(Vec::new).push(index);
+                vendor_groups
+                    .entry(validator.tee_type.clone())
+                    .or_insert_with(Vec::new)
+                    .push(index);
             }
         }
 
@@ -1299,7 +1303,7 @@ impl<E: EthSpec> BeaconState<E> {
         sync_committee: &SyncCommittee<E>,
     ) -> Result<Vec<usize>, Error> {
         self.update_pubkey_cache()?;
-        
+
         // DEBUG: Log first few validator pubkeys and sync committee pubkeys
         tracing::warn!(
             "DEBUG: Validator count = {}, Pubkey cache len = {}, Sync committee size = {}",
@@ -1307,7 +1311,7 @@ impl<E: EthSpec> BeaconState<E> {
             self.pubkey_cache().len(),
             sync_committee.pubkeys.len()
         );
-        
+
         // Log first 3 validators for debugging
         for (i, validator) in self.validators().iter().take(3).enumerate() {
             tracing::warn!(
@@ -1317,7 +1321,7 @@ impl<E: EthSpec> BeaconState<E> {
                 validator.tee_type
             );
         }
-        
+
         // Log ALL sync committee pubkeys that are NOT in cache
         for (i, pubkey) in sync_committee.pubkeys.iter().enumerate() {
             if self.pubkey_cache().get(pubkey).is_none() {
@@ -1348,7 +1352,7 @@ impl<E: EthSpec> BeaconState<E> {
                 }
             }
         }
-        
+
         // Log first 3 sync committee pubkeys that ARE in cache
         for (i, pubkey) in sync_committee.pubkeys.iter().take(3).enumerate() {
             tracing::warn!(
@@ -1358,22 +1362,20 @@ impl<E: EthSpec> BeaconState<E> {
                 self.pubkey_cache().get(pubkey).is_some()
             );
         }
-        
+
         sync_committee
             .pubkeys
             .iter()
             .map(|pubkey| {
-                self.pubkey_cache()
-                    .get(pubkey)
-                    .ok_or_else(|| {
-                        tracing::error!(
-                            pubkey = ?pubkey,
-                            cache_len = self.pubkey_cache().len(),
-                            validators_len = self.validators().len(),
-                            "PubkeyCacheInconsistent: sync committee pubkey not found in cache"
-                        );
-                        Error::PubkeyCacheInconsistent
-                    })
+                self.pubkey_cache().get(pubkey).ok_or_else(|| {
+                    tracing::error!(
+                        pubkey = ?pubkey,
+                        cache_len = self.pubkey_cache().len(),
+                        validators_len = self.validators().len(),
+                        "PubkeyCacheInconsistent: sync committee pubkey not found in cache"
+                    );
+                    Error::PubkeyCacheInconsistent
+                })
             })
             .collect()
     }
@@ -2466,7 +2468,8 @@ impl<E: EthSpec> BeaconState<E> {
         val: &Validator,
     ) -> Result<bool, Error> {
         Ok(val.is_active_at(previous_epoch)
-            || (val.is_slashed() && previous_epoch.safe_add(Epoch::new(1))? < val.withdrawable_epoch))
+            || (val.is_slashed()
+                && previous_epoch.safe_add(Epoch::new(1))? < val.withdrawable_epoch))
     }
 
     /// Passing `previous_epoch` to this function rather than computing it internally provides
@@ -2818,14 +2821,14 @@ impl<E: EthSpec> BeaconState<E> {
     }
 
     // TEE Validator Selection Methods
-    
+
     /// Get all active TEE validators
     pub fn get_active_tee_validators(&self) -> Result<Vec<TEEValidator>, Error> {
         // For now, return empty vector - this would be populated from a TEE validator registry
         // In a real implementation, this would read from a TEE-specific validator list
         Ok(vec![])
     }
-    
+
     /// Select TEE validators for consensus duties
     pub fn select_tee_validators_for_consensus(
         &self,
@@ -2833,17 +2836,19 @@ impl<E: EthSpec> BeaconState<E> {
         spec: &ChainSpec,
     ) -> Result<TEEValidatorSelection, Error> {
         let active_tee_validators = self.get_active_tee_validators()?;
-        
+
         // Group validators by TEE type
-        let mut validators_by_type: std::collections::HashMap<TEEType, Vec<&TEEValidator>> = std::collections::HashMap::new();
+        let mut validators_by_type: std::collections::HashMap<TEEType, Vec<&TEEValidator>> =
+            std::collections::HashMap::new();
         for validator in &active_tee_validators {
             if validator.is_active && validator.has_valid_attestation(self.get_time()?) {
-                validators_by_type.entry(validator.tee_type.clone())
+                validators_by_type
+                    .entry(validator.tee_type.clone())
                     .or_default()
                     .push(validator);
             }
         }
-        
+
         // Ensure we have at least one validator of each required TEE type
         let required_types = vec![TEEType::SEV, TEEType::TDX, TEEType::CCA];
         for tee_type in &required_types {
@@ -2851,33 +2856,26 @@ impl<E: EthSpec> BeaconState<E> {
                 return Err(Error::InsufficientValidators);
             }
         }
-        
+
         // Select proposers (one from each TEE type)
         let mut proposers = Vec::new();
         for tee_type in &required_types {
             let validators = validators_by_type.get(tee_type).unwrap();
-            let proposer = self.select_proposer_from_tee_type(
-                validators, 
-                slot, 
-                spec
-            )?;
+            let proposer = self.select_proposer_from_tee_type(validators, slot, spec)?;
             proposers.push(proposer.clone());
         }
-        
+
         // Select attestation committees (random across all TEE types)
-        let committees = self.select_tee_attestation_committees(
-            &active_tee_validators,
-            slot,
-            spec
-        )?;
-        
+        let committees =
+            self.select_tee_attestation_committees(&active_tee_validators, slot, spec)?;
+
         Ok(TEEValidatorSelection {
             proposers,
             committees,
             required_tee_types: required_types,
         })
     }
-    
+
     /// Select a proposer from a specific TEE type (random selection)
     fn select_proposer_from_tee_type(
         &self,
@@ -2888,17 +2886,17 @@ impl<E: EthSpec> BeaconState<E> {
         if validators.is_empty() {
             return Err(Error::InsufficientValidators);
         }
-        
+
         // Use slot-based randomness for selection
         let seed = self.get_tee_selection_seed(slot, spec)?;
-        
+
         // Additional randomness using the seed
         let random_offset = self.compute_tee_random_offset(&seed, validators.len())?;
         let selected_index = (slot.as_u64() as usize + random_offset) % validators.len();
-        
+
         Ok(validators[selected_index].clone())
     }
-    
+
     /// Select attestation committees (random across all TEE types)
     fn select_tee_attestation_committees(
         &self,
@@ -2911,39 +2909,40 @@ impl<E: EthSpec> BeaconState<E> {
             .iter()
             .filter(|v| v.is_active && v.has_valid_attestation(current_time))
             .collect();
-            
+
         if active_validators.is_empty() {
             return Err(Error::InsufficientValidators);
         }
-        
+
         // Shuffle validators using slot-based randomness
         let seed = self.get_tee_selection_seed(slot, spec)?;
         let mut shuffled_indices = (0..active_validators.len()).collect::<Vec<_>>();
         self.shuffle_tee_validators(&mut shuffled_indices, &seed, spec)?;
-        
+
         // Divide into committees
-        let committees_per_slot = self.calculate_tee_committees_per_slot(active_validators.len(), spec)?;
+        let committees_per_slot =
+            self.calculate_tee_committees_per_slot(active_validators.len(), spec)?;
         let mut committees = Vec::new();
-        
+
         for committee_index in 0..committees_per_slot {
             let start = (committee_index * active_validators.len()) / committees_per_slot;
             let end = ((committee_index + 1) * active_validators.len()) / committees_per_slot;
-            
+
             let committee_validators: Vec<_> = shuffled_indices[start..end]
                 .iter()
                 .map(|&idx| active_validators[idx].clone())
                 .collect();
-                
+
             committees.push(TEECommittee {
                 slot,
                 index: committee_index as u64,
                 validators: committee_validators,
             });
         }
-        
+
         Ok(committees)
     }
-    
+
     /// Get TEE selection seed for randomization
     fn get_tee_selection_seed(&self, slot: Slot, spec: &ChainSpec) -> Result<Vec<u8>, Error> {
         let epoch = slot.epoch(E::slots_per_epoch());
@@ -2954,23 +2953,33 @@ impl<E: EthSpec> BeaconState<E> {
         preimage.append(&mut int_to_bytes8(slot.as_u64()));
         Ok(hash(&preimage))
     }
-    
+
     /// Compute random offset for TEE validator selection
-    fn compute_tee_random_offset(&self, seed: &[u8], validator_count: usize) -> Result<usize, Error> {
+    fn compute_tee_random_offset(
+        &self,
+        seed: &[u8],
+        validator_count: usize,
+    ) -> Result<usize, Error> {
         if validator_count == 0 {
             return Ok(0);
         }
-        
+
         let hash_result = hash(seed);
         let random_bytes = &hash_result[0..8];
         let random_value = u64::from_le_bytes([
-            random_bytes[0], random_bytes[1], random_bytes[2], random_bytes[3],
-            random_bytes[4], random_bytes[5], random_bytes[6], random_bytes[7],
+            random_bytes[0],
+            random_bytes[1],
+            random_bytes[2],
+            random_bytes[3],
+            random_bytes[4],
+            random_bytes[5],
+            random_bytes[6],
+            random_bytes[7],
         ]);
-        
+
         Ok((random_value as usize) % validator_count)
     }
-    
+
     /// Shuffle TEE validators using the seed
     fn shuffle_tee_validators(
         &self,
@@ -2984,12 +2993,13 @@ impl<E: EthSpec> BeaconState<E> {
             spec.shuffle_round_count,
             seed,
             false,
-        ).ok_or(Error::UnableToShuffle)?;
-        
+        )
+        .ok_or(Error::UnableToShuffle)?;
+
         indices.copy_from_slice(&shuffled);
         Ok(())
     }
-    
+
     /// Calculate number of TEE committees per slot
     fn calculate_tee_committees_per_slot(
         &self,
@@ -2999,17 +3009,20 @@ impl<E: EthSpec> BeaconState<E> {
         // Ensure we have at least one committee per slot
         let min_committees = 1;
         let max_committees = validator_count / 4; // Minimum 4 validators per committee
-        
-        Ok(std::cmp::max(min_committees, std::cmp::min(max_committees, 64)))
+
+        Ok(std::cmp::max(
+            min_committees,
+            std::cmp::min(max_committees, 64),
+        ))
     }
-    
+
     /// Get current time for TEE attestation validation
     fn get_time(&self) -> Result<u64, Error> {
         // This would typically get the current system time
         // For now, return a placeholder
         Ok(self.genesis_time() + self.slot().as_u64() * 12) // 12 seconds per slot
     }
-    
+
     /// Verify TEE consensus diversity
     pub fn verify_tee_consensus_diversity(
         &self,
@@ -3017,25 +3030,28 @@ impl<E: EthSpec> BeaconState<E> {
         attestation_pubkeys: &[PublicKeyBytes],
     ) -> Result<bool, Error> {
         let mut tee_types_present = std::collections::HashSet::new();
-        
+
         // Check proposer TEE type
         if let Some(proposer) = self.get_tee_validator_by_pubkey(proposer_pubkey)? {
             tee_types_present.insert(proposer.tee_type);
         }
-        
+
         // Check attestation TEE types
         for pubkey in attestation_pubkeys {
             if let Some(validator) = self.get_tee_validator_by_pubkey(pubkey)? {
                 tee_types_present.insert(validator.tee_type);
             }
         }
-        
+
         // Require at least 3 different TEE types
         Ok(tee_types_present.len() >= 3)
     }
-    
+
     /// Get TEE validator by public key
-    fn get_tee_validator_by_pubkey(&self, _pubkey: &PublicKeyBytes) -> Result<Option<TEEValidator>, Error> {
+    fn get_tee_validator_by_pubkey(
+        &self,
+        _pubkey: &PublicKeyBytes,
+    ) -> Result<Option<TEEValidator>, Error> {
         // This would look up the TEE validator in the registry
         // For now, return None as placeholder
         Ok(None)
@@ -3083,11 +3099,29 @@ impl<E: EthSpec> BeaconState<E> {
         let slot = Slot::from_ssz_bytes(slot_bytes)?;
         let fork_at_slot = spec.fork_name_at_slot::<E>(slot);
 
-        Ok(map_fork_name!(
-            fork_at_slot,
-            Self,
-            <_>::from_ssz_bytes(bytes)?
-        ))
+        let result = (|| -> Result<Self, ssz::DecodeError> {
+            let state = map_fork_name!(fork_at_slot, Self, <_>::from_ssz_bytes(bytes)?);
+            Ok(state)
+        })();
+
+        if let Err(ref err) = result {
+            eprintln!(
+                "BeaconState::from_ssz_bytes failed: len={} slot={} fork={:?} err={:?}",
+                bytes.len(),
+                slot.as_u64(),
+                fork_at_slot,
+                err
+            );
+            tracing::debug!(
+                bytes_len = bytes.len(),
+                slot = slot.as_u64(),
+                fork = ?fork_at_slot,
+                error = ?err,
+                "BeaconState::from_ssz_bytes failed",
+            );
+        }
+
+        result
     }
 
     #[allow(clippy::arithmetic_side_effects)]

@@ -33,7 +33,7 @@ pub async fn verify_validator_tee_attestation(
     // Mock implementation - in production this would call Azure Attestation Service
     let attestation_service = AzureAttestationService::new_mock();
     
-    // TODO: Parse attestation_data into TEEAttestation
+    // TODO: Parse attestation_data into a fixed-size TEEQuote
     // For now, just return true for mock
     Ok(true)
 }
