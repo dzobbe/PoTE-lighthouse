@@ -252,15 +252,15 @@ impl Eth2NetworkConfig {
                 |bytes| match BeaconState::from_ssz_bytes(bytes.as_ref(), &spec) {
                     Ok(state) => Ok(state),
                     Err(e) => {
-                        tracing::warn!(
+                        // Provide more detailed error information for debugging
+                        let error_msg = format!("Built-in genesis state SSZ bytes are invalid: {:?}", e);
+                        tracing::error!(
                             error = ?e,
                             bytes_len = bytes.as_ref().len(),
-                            "Built-in genesis state SSZ bytes failed to decode",
+                            error_details = %error_msg,
+                            "Built-in genesis state SSZ bytes failed to decode. This may indicate a mismatch between the genesis generator and Lighthouse's expected SSZ structure. Ensure the genesis state was generated with a compatible version that includes TEE fields in block headers.",
                         );
-                        Err(format!(
-                            "Built-in genesis state SSZ bytes are invalid: {:?}",
-                            e
-                        ))
+                        Err(error_msg)
                     }
                 },
             )
