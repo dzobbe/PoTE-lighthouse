@@ -1,4 +1,4 @@
-use crate::{test_utils::TestRandom, *};
+use crate::{test_utils::TestRandom, tee_attestation::TEEQuote, tee_types::TEEType, *};
 use derivative::Derivative;
 use serde::{Deserialize, Deserializer, Serialize};
 use ssz::{Decode, Encode};
@@ -92,6 +92,12 @@ pub struct ExecutionPayloadHeader<E: EthSpec> {
     #[superstruct(only(Deneb, Electra, Fulu, Gloas), partial_getter(copy))]
     #[serde(with = "serde_utils::quoted_u64")]
     pub excess_blob_gas: u64,
+    /// TEE vendor type of the validator proposing this block (SEV, TDX, or CCA)
+    #[superstruct(getter(copy))]
+    pub tee_vendor_type: TEEType,
+    /// Fixed-size attestation quote provided by the proposer (8 KiB base64 payload)
+    #[superstruct(getter(copy))]
+    pub tee_attestation_quote: TEEQuote,
 }
 
 impl<E: EthSpec> ExecutionPayloadHeader<E> {
@@ -169,6 +175,8 @@ impl<E: EthSpec> ExecutionPayloadHeaderBellatrix<E> {
             block_hash: self.block_hash,
             transactions_root: self.transactions_root,
             withdrawals_root: Hash256::zero(),
+            tee_vendor_type: self.tee_vendor_type,
+            tee_attestation_quote: self.tee_attestation_quote,
         }
     }
 }
@@ -193,6 +201,8 @@ impl<E: EthSpec> ExecutionPayloadHeaderCapella<E> {
             withdrawals_root: self.withdrawals_root,
             blob_gas_used: 0,
             excess_blob_gas: 0,
+            tee_vendor_type: self.tee_vendor_type,
+            tee_attestation_quote: self.tee_attestation_quote,
         }
     }
 }
@@ -217,6 +227,8 @@ impl<E: EthSpec> ExecutionPayloadHeaderDeneb<E> {
             withdrawals_root: self.withdrawals_root,
             blob_gas_used: self.blob_gas_used,
             excess_blob_gas: self.excess_blob_gas,
+            tee_vendor_type: self.tee_vendor_type,
+            tee_attestation_quote: self.tee_attestation_quote,
         }
     }
 }
@@ -241,6 +253,8 @@ impl<E: EthSpec> ExecutionPayloadHeaderElectra<E> {
             withdrawals_root: self.withdrawals_root,
             blob_gas_used: self.blob_gas_used,
             excess_blob_gas: self.excess_blob_gas,
+            tee_vendor_type: self.tee_vendor_type,
+            tee_attestation_quote: self.tee_attestation_quote,
         }
     }
 }
@@ -265,6 +279,8 @@ impl<E: EthSpec> ExecutionPayloadHeaderFulu<E> {
             withdrawals_root: self.withdrawals_root,
             blob_gas_used: self.blob_gas_used,
             excess_blob_gas: self.excess_blob_gas,
+            tee_vendor_type: self.tee_vendor_type,
+            tee_attestation_quote: self.tee_attestation_quote,
         }
     }
 }
@@ -286,6 +302,8 @@ impl<'a, E: EthSpec> From<&'a ExecutionPayloadBellatrix<E>> for ExecutionPayload
             base_fee_per_gas: payload.base_fee_per_gas,
             block_hash: payload.block_hash,
             transactions_root: payload.transactions.tree_hash_root(),
+            tee_vendor_type: payload.tee_vendor_type,
+            tee_attestation_quote: payload.tee_attestation_quote,
         }
     }
 }
@@ -308,6 +326,8 @@ impl<'a, E: EthSpec> From<&'a ExecutionPayloadCapella<E>> for ExecutionPayloadHe
             block_hash: payload.block_hash,
             transactions_root: payload.transactions.tree_hash_root(),
             withdrawals_root: payload.withdrawals.tree_hash_root(),
+            tee_vendor_type: payload.tee_vendor_type,
+            tee_attestation_quote: payload.tee_attestation_quote,
         }
     }
 }
@@ -332,6 +352,8 @@ impl<'a, E: EthSpec> From<&'a ExecutionPayloadDeneb<E>> for ExecutionPayloadHead
             withdrawals_root: payload.withdrawals.tree_hash_root(),
             blob_gas_used: payload.blob_gas_used,
             excess_blob_gas: payload.excess_blob_gas,
+            tee_vendor_type: payload.tee_vendor_type,
+            tee_attestation_quote: payload.tee_attestation_quote,
         }
     }
 }
@@ -356,6 +378,8 @@ impl<'a, E: EthSpec> From<&'a ExecutionPayloadElectra<E>> for ExecutionPayloadHe
             withdrawals_root: payload.withdrawals.tree_hash_root(),
             blob_gas_used: payload.blob_gas_used,
             excess_blob_gas: payload.excess_blob_gas,
+            tee_vendor_type: payload.tee_vendor_type,
+            tee_attestation_quote: payload.tee_attestation_quote,
         }
     }
 }
@@ -380,6 +404,8 @@ impl<'a, E: EthSpec> From<&'a ExecutionPayloadFulu<E>> for ExecutionPayloadHeade
             withdrawals_root: payload.withdrawals.tree_hash_root(),
             blob_gas_used: payload.blob_gas_used,
             excess_blob_gas: payload.excess_blob_gas,
+            tee_vendor_type: payload.tee_vendor_type,
+            tee_attestation_quote: payload.tee_attestation_quote,
         }
     }
 }
@@ -404,6 +430,8 @@ impl<'a, E: EthSpec> From<&'a ExecutionPayloadGloas<E>> for ExecutionPayloadHead
             withdrawals_root: payload.withdrawals.tree_hash_root(),
             blob_gas_used: payload.blob_gas_used,
             excess_blob_gas: payload.excess_blob_gas,
+            tee_vendor_type: payload.tee_vendor_type,
+            tee_attestation_quote: payload.tee_attestation_quote,
         }
     }
 }
