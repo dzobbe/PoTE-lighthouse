@@ -169,19 +169,71 @@ impl ssz::Decode for BeaconBlockHeader {
 
     fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
         const LEGACY_LEN: usize = 112;
+        const EXPECTED_LEN: usize = EXTENDED_HEADER_BYTES;
 
+        // Try decoding with the expected format first (with TEE fields)
         match BeaconBlockHeaderSsz::from_ssz_bytes(bytes) {
             Ok(header) => Ok(header.into()),
             Err(err) => {
+                // If we get an offset error, try variable-length format
                 if matches!(err, DecodeError::OffsetIntoFixedPortion(_)) {
                     if let Ok(variable_header) = BeaconBlockHeaderVariable::from_ssz_bytes(bytes) {
                         return Ok(variable_header.into());
                     }
                 }
+                
+                // Handle legacy format (112 bytes, no TEE fields)
                 if bytes.len() == LEGACY_LEN {
-                    tracing::warn!("Decoding legacy beacon block header");
+                    tracing::warn!(
+                        "Decoding legacy beacon block header ({} bytes, expected {} bytes with TEE fields)",
+                        bytes.len(),
+                        EXPECTED_LEN
+                    );
                     return decode_legacy_header(bytes).map_err(|_| err);
                 }
+                
+                // If the length is close to expected but not exact, provide helpful error
+                if bytes.len() > LEGACY_LEN && bytes.len() < EXPECTED_LEN {
+                    tracing::warn!(
+                        "Beacon block header has unexpected length: {} bytes (expected {} bytes with TEE fields or {} bytes legacy)",
+                        bytes.len(),
+                        EXPECTED_LEN,
+                        LEGACY_LEN
+                    );
+                    // Try to decode as much as we can, padding the TEE fields
+                    if bytes.len() >= LEGACY_LEN {
+                        if let Ok(mut header) = decode_legacy_header(&bytes[..LEGACY_LEN.min(bytes.len())]) {
+                            // If there's extra data, try to parse TEE fields from it
+                            if bytes.len() > LEGACY_LEN {
+                                let tee_start = LEGACY_LEN;
+                                if bytes.len() >= tee_start + 1 {
+                                    // Try to decode TEE type
+                                    if let Ok(tee_type) = TEEType::from_ssz_bytes(&bytes[tee_start..tee_start + 1]) {
+                                        header.proposer_tee_type = tee_type;
+                                        
+                                        // Try to decode TEE quote if available
+                                        let quote_start = tee_start + 1;
+                                        if bytes.len() >= quote_start + TEE_QUOTE_SIZE {
+                                            if let Ok(quote) = TEEQuote::from_ssz_bytes(&bytes[quote_start..quote_start + TEE_QUOTE_SIZE]) {
+                                                header.proposer_tee_quote = quote;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            return Ok(header);
+                        }
+                    }
+                }
+                
+                // Provide detailed error information
+                tracing::error!(
+                    "Failed to decode beacon block header: len={}, expected={} or {}, error={:?}",
+                    bytes.len(),
+                    EXPECTED_LEN,
+                    LEGACY_LEN,
+                    err
+                );
                 Err(err)
             }
         }
