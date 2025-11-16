@@ -2,10 +2,10 @@
 participants:
   - el_type: geth
     cl_type: lighthouse
-    cl_image: docker.io/giobbe/poc-lighthouse
+    cl_image: docker.io/giobbe/poc-lighthouse-test
     validator_count: 5  # Number of validators for each node
     count: 3
-
+      
 network_params:
   network_id: "585858"
 # Genesis gas limit (in hex or decimal)
@@ -43,7 +43,6 @@ additional_services:
 dora_params:
   image: docker.io/giobbe/poc-dora
 
-# Blockscout configuration
-blockscout_params:
-  image: docker.io/blockscout/blockscout:latest
-  network_name: "POC Lighthouse Testnet"
+# # Blockscout configuration
+# blockscout_params:
+#   image: docker.io/blockscout/blockscout:latest

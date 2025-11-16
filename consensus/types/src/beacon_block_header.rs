@@ -9,7 +9,7 @@ use ssz::DecodeError;
 use ssz_derive::Encode;
 use ssz_types::VariableList;
 use test_random_derive::TestRandom;
-use typenum::U8192;
+use typenum::U131072;
 use tree_hash::TreeHash;
 use tree_hash_derive::TreeHash;
 
@@ -108,7 +108,7 @@ struct BeaconBlockHeaderVariable {
     state_root: Hash256,
     body_root: Hash256,
     proposer_tee_type: TEEType,
-    proposer_tee_quote: VariableList<u8, U8192>,
+    proposer_tee_quote: VariableList<u8, U131072>,
 }
 
 impl From<BeaconBlockHeaderSsz> for BeaconBlockHeader {
@@ -131,11 +131,16 @@ impl From<BeaconBlockHeaderVariable> for BeaconBlockHeader {
             TEEQuote::default()
         } else {
             let slice = value.proposer_tee_quote.as_ref();
+            tracing::debug!(
+                actual_len = slice.len(),
+                expected_len = TEE_QUOTE_SIZE,
+                "Decoding variable-length proposer TEE quote"
+            );
             if slice.len() != TEE_QUOTE_SIZE {
                 tracing::warn!(
-                    "TEE quote length {} differs from expected {}; padding/truncating",
-                    slice.len(),
-                    TEE_QUOTE_SIZE
+                    actual_len = slice.len(),
+                    expected_len = TEE_QUOTE_SIZE,
+                    "TEE quote length differs from expected; padding or truncating as required"
                 );
             }
             let mut array = [0u8; TEE_QUOTE_SIZE];
@@ -174,8 +179,16 @@ impl ssz::Decode for BeaconBlockHeader {
             Ok(header) => Ok(header.into()),
             Err(err) => {
                 if matches!(err, DecodeError::OffsetIntoFixedPortion(_)) {
-                    if let Ok(variable_header) = BeaconBlockHeaderVariable::from_ssz_bytes(bytes) {
-                        return Ok(variable_header.into());
+                    match BeaconBlockHeaderVariable::from_ssz_bytes(bytes) {
+                        Ok(variable_header) => return Ok(variable_header.into()),
+                        Err(variable_err) => {
+                            tracing::error!(
+                                original_error = ?err,
+                                variable_error = ?variable_err,
+                                total_bytes = bytes.len(),
+                                "Failed to decode beacon block header with variable-length TEE quote"
+                            );
+                        }
                     }
                 }
                 if bytes.len() == LEGACY_LEN {
