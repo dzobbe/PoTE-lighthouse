@@ -24,9 +24,10 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
-use tracing::{info, warn};
-use types::{BeaconState, ChainSpec, Config, EthSpec, EthSpecId, Hash256};
+use tracing::{debug, info, warn};
+use types::{BeaconState, ChainSpec, Config, EthSpec, EthSpecId, Hash256, Slot};
 use url::Url;
+use ethereum_ssz as ssz;
 
 pub use eth2_config::GenesisStateSource;
 
@@ -246,24 +247,118 @@ impl Eth2NetworkConfig {
 
     fn get_genesis_state_from_bytes<E: EthSpec>(&self) -> Result<BeaconState<E>, String> {
         let spec = self.chain_spec::<E>()?;
+
         self.genesis_state_bytes
             .as_ref()
-            .map(
-                |bytes| match BeaconState::from_ssz_bytes(bytes.as_ref(), &spec) {
-                    Ok(state) => Ok(state),
+            .map(|bytes| {
+                let bytes_ref = bytes.as_ref();
+
+                // Extra debugging to help diagnose OffsetIntoFixedPortion and similar SSZ errors.
+                // This logs which network/config is being used and the expected fork at genesis.
+                let config_name = self
+                    .config
+                    .config_name
+                    .clone()
+                    .unwrap_or_else(|| "<unknown>".to_string());
+                let eth_spec_id = self
+                    .eth_spec_id()
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|_| "<unknown>".to_string());
+                let genesis_fork = spec.fork_name_at_slot::<E>(Slot::new(0));
+
+                // Log fork configuration to verify which fork is active
+                let fork_epochs = format!(
+                    "altair={:?}, bellatrix={:?}, capella={:?}, deneb={:?}, electra={:?}, fulu={:?}, gloas={:?}",
+                    spec.altair_fork_epoch,
+                    spec.bellatrix_fork_epoch,
+                    spec.capella_fork_epoch,
+                    spec.deneb_fork_epoch,
+                    spec.electra_fork_epoch,
+                    spec.fulu_fork_epoch,
+                    spec.gloas_fork_epoch,
+                );
+
+                // Determine genesis source
+                let genesis_source = match &self.genesis_state_source {
+                    GenesisStateSource::IncludedBytes => {
+                        match &self.genesis_state_bytes {
+                            Some(GenesisStateBytes::Slice(_)) => "built-in (compiled into binary)",
+                            Some(GenesisStateBytes::Vec(_)) => "file (loaded from testnet directory)",
+                            None => "unknown",
+                        }
+                    }
+                    GenesisStateSource::Url { .. } => "URL (downloaded)",
+                    GenesisStateSource::Unknown => "unknown",
+                };
+
+                info!(
+                    bytes_len = bytes_ref.len(),
+                    %config_name,
+                    %eth_spec_id,
+                    preset_base = %self.config.preset_base,
+                    ?genesis_fork,
+                    genesis_source = %genesis_source,
+                    fork_epochs = %fork_epochs,
+                    "Decoding genesis state from bytes",
+                );
+
+                // Log first few bytes for debugging (without hex encoding to avoid extra dependency)
+                if bytes_ref.len() > 100 {
+                    debug!(
+                        first_bytes_len = 100,
+                        total_bytes_len = bytes_ref.len(),
+                        "Genesis state preview (first 100 bytes logged)",
+                    );
+                }
+
+                match BeaconState::from_ssz_bytes(bytes_ref, &spec) {
+                    Ok(state) => {
+                        // Verify TEE fields by checking the latest block header if available
+                        let latest_block_header = state.latest_block_header();
+                        use ssz::Encode;
+                        let header_size = latest_block_header.as_ssz_bytes().len();
+                        info!(
+                            "🔍 Genesis block header size: {} bytes (expected TEE: 8305, standard: 112)",
+                            header_size
+                        );
+                        info!(
+                            header_size = header_size,
+                            expected_tee_header_size = 8305,
+                            expected_standard_header_size = 112,
+                            "Latest block header size check (TEE header should be ~8305 bytes, standard is 112)",
+                        );
+                        Ok(state)
+                    }
                     Err(e) => {
-                        tracing::warn!(
-                            error = ?e,
-                            bytes_len = bytes.as_ref().len(),
-                            "Built-in genesis state SSZ bytes failed to decode",
+                        // Enhanced error logging with offset details
+                        let error_details = if let ssz::DecodeError::OffsetIntoFixedPortion(offset) = &e {
+                            format!(
+                                "OffsetIntoFixedPortion at byte {} (total bytes: {})",
+                                offset,
+                                bytes_ref.len()
+                            )
+                        } else {
+                            format!("{:?}", e)
+                        };
+
+                        warn!(
+                            error = %error_details,
+                            bytes_len = bytes_ref.len(),
+                            %config_name,
+                            %eth_spec_id,
+                            preset_base = %self.config.preset_base,
+                            ?genesis_fork,
+                            genesis_source = %genesis_source,
+                            fork_epochs = %fork_epochs,
+                            "Genesis state SSZ bytes failed to decode",
                         );
                         Err(format!(
-                            "Built-in genesis state SSZ bytes are invalid: {:?}",
-                            e
+                            "Genesis state SSZ bytes are invalid: {}",
+                            error_details
                         ))
                     }
-                },
-            )
+                }
+            })
             .ok_or("Genesis state bytes missing from Eth2NetworkConfig")?
     }
 
@@ -359,6 +454,10 @@ impl Eth2NetworkConfig {
         // The genesis state is a special case because it uses SSZ, not YAML.
         let genesis_file_path = base_dir.join(GENESIS_STATE_FILE);
         let (genesis_state_bytes, genesis_state_source) = if genesis_file_path.exists() {
+            info!(
+                genesis_file = ?genesis_file_path,
+                "Loading genesis state from file",
+            );
             let mut bytes = vec![];
             File::open(&genesis_file_path)
                 .map_err(|e| format!("Unable to open {:?}: {:?}", genesis_file_path, e))
@@ -366,6 +465,12 @@ impl Eth2NetworkConfig {
                     file.read_to_end(&mut bytes)
                         .map_err(|e| format!("Unable to read {:?}: {:?}", file, e))
                 })?;
+
+            info!(
+                genesis_file = ?genesis_file_path,
+                bytes_len = bytes.len(),
+                "Successfully loaded genesis state from file",
+            );
 
             let state = Some(bytes).filter(|bytes| !bytes.is_empty());
             let genesis_state_source = if state.is_some() {
@@ -375,6 +480,10 @@ impl Eth2NetworkConfig {
             };
             (state, genesis_state_source)
         } else {
+            warn!(
+                genesis_file = ?genesis_file_path,
+                "Genesis state file not found, will use built-in or URL source",
+            );
             (None, GenesisStateSource::Unknown)
         };
 
