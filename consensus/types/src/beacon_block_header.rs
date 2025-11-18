@@ -131,7 +131,7 @@ impl From<BeaconBlockHeaderVariable> for BeaconBlockHeader {
             TEEQuote::default()
         } else {
             let slice = value.proposer_tee_quote.as_ref();
-            tracing::debug!(
+            tracing::info!(
                 actual_len = slice.len(),
                 expected_len = TEE_QUOTE_SIZE,
                 "Decoding variable-length proposer TEE quote"
@@ -174,27 +174,93 @@ impl ssz::Decode for BeaconBlockHeader {
 
     fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
         const LEGACY_LEN: usize = 112;
+        const EXPECTED_TEE_HEADER_LEN: usize = EXTENDED_HEADER_BYTES;
+
+        tracing::info!(
+            bytes_len = bytes.len(),
+            expected_fixed_len = EXPECTED_TEE_HEADER_LEN,
+            expected_legacy_len = LEGACY_LEN,
+            "Decoding BeaconBlockHeader from SSZ bytes",
+        );
 
         match BeaconBlockHeaderSsz::from_ssz_bytes(bytes) {
-            Ok(header) => Ok(header.into()),
+            Ok(header) => {
+                let decoded: BeaconBlockHeader = header.into();
+                use ssz::Encode;
+                let encoded_size = decoded.as_ssz_bytes().len();
+                tracing::info!(
+                    decoded_size = encoded_size,
+                    slot = decoded.slot.as_u64(),
+                    proposer_index = decoded.proposer_index,
+                    tee_type = ?decoded.proposer_tee_type,
+                    "Successfully decoded BeaconBlockHeader (fixed-length TEE format)",
+                );
+                Ok(decoded)
+            }
             Err(err) => {
+                tracing::info!(
+                    error = ?err,
+                    bytes_len = bytes.len(),
+                    "Initial decode attempt failed, trying fallback strategies",
+                );
+                
                 if matches!(err, DecodeError::OffsetIntoFixedPortion(_)) {
+                    tracing::info!(
+                        "OffsetIntoFixedPortion error detected, attempting variable-length TEE quote decoding",
+                    );
                     match BeaconBlockHeaderVariable::from_ssz_bytes(bytes) {
-                        Ok(variable_header) => return Ok(variable_header.into()),
+                        Ok(variable_header) => {
+                            let decoded: BeaconBlockHeader = variable_header.into();
+                            use ssz::Encode;
+                            let encoded_size = decoded.as_ssz_bytes().len();
+                            tracing::info!(
+                                decoded_size = encoded_size,
+                                slot = decoded.slot.as_u64(),
+                                "Successfully decoded BeaconBlockHeader (variable-length TEE format)",
+                            );
+                            return Ok(decoded);
+                        }
                         Err(variable_err) => {
                             tracing::error!(
                                 original_error = ?err,
                                 variable_error = ?variable_err,
                                 total_bytes = bytes.len(),
-                                "Failed to decode beacon block header with variable-length TEE quote"
+                                expected_fixed_len = EXPECTED_TEE_HEADER_LEN,
+                                "Failed to decode beacon block header with both fixed and variable-length TEE quote formats"
                             );
                         }
                     }
                 }
                 if bytes.len() == LEGACY_LEN {
-                    tracing::warn!("Decoding legacy beacon block header");
-                    return decode_legacy_header(bytes).map_err(|_| err);
+                    tracing::info!(
+                        bytes_len = bytes.len(),
+                        "Attempting to decode legacy beacon block header (112 bytes, no TEE fields)",
+                    );
+                    match decode_legacy_header(bytes) {
+                        Ok(legacy_header) => {
+                            tracing::info!(
+                                slot = legacy_header.slot.as_u64(),
+                                "Successfully decoded legacy beacon block header",
+                            );
+                            return Ok(legacy_header);
+                        }
+                        Err(legacy_err) => {
+                            tracing::error!(
+                                legacy_error = ?legacy_err,
+                                "Failed to decode legacy beacon block header",
+                            );
+                            return Err(err);
+                        }
+                    }
                 }
+                
+                tracing::error!(
+                    error = ?err,
+                    bytes_len = bytes.len(),
+                    expected_fixed_len = EXPECTED_TEE_HEADER_LEN,
+                    expected_legacy_len = LEGACY_LEN,
+                    "All decode attempts failed for BeaconBlockHeader",
+                );
                 Err(err)
             }
         }

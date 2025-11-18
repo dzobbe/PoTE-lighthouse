@@ -25,9 +25,9 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
 use tracing::{debug, info, warn};
-use types::{BeaconState, ChainSpec, Config, EthSpec, EthSpecId, Hash256, Slot};
+use types::{BeaconBlockHeader, BeaconState, ChainSpec, Config, EthSpec, EthSpecId, Fork, Hash256, Slot};
 use url::Url;
-use ethereum_ssz as ssz;
+use ssz::{DecodeError, Encode};
 
 pub use eth2_config::GenesisStateSource;
 
@@ -311,12 +311,235 @@ impl Eth2NetworkConfig {
                     );
                 }
 
+                // Log SSZ structure information before decoding
+                // Calculate expected fixed portion sizes
+                use ssz::Decode;
+                let expected_header_size = <BeaconBlockHeader as Decode>::ssz_fixed_len();
+                let genesis_time_len = <u64 as Decode>::ssz_fixed_len();
+                let genesis_validators_root_len = <Hash256 as Decode>::ssz_fixed_len();
+                let slot_len = <Slot as Decode>::ssz_fixed_len();
+                let fork_len = <Fork as Decode>::ssz_fixed_len();
+                
+                // Calculate where the header should start in the fixed portion
+                let header_start_offset = genesis_time_len + genesis_validators_root_len + slot_len + fork_len;
+                
+                // Try to extract header size from SSZ bytes if possible
+                let actual_header_size_in_bytes = if bytes_ref.len() > header_start_offset + expected_header_size {
+                    // We can't directly read the header size without decoding, but we can log the expected position
+                    Some(expected_header_size)
+                } else {
+                    None
+                };
+                
+                info!(
+                    total_bytes = bytes_ref.len(),
+                    expected_header_fixed_len = expected_header_size,
+                    expected_tee_header_size = 8305,
+                    expected_standard_header_size = 112,
+                    header_start_offset = header_start_offset,
+                    genesis_time_len = genesis_time_len,
+                    genesis_validators_root_len = genesis_validators_root_len,
+                    slot_len = slot_len,
+                    fork_len = fork_len,
+                    actual_header_size_in_bytes = ?actual_header_size_in_bytes,
+                    "Starting genesis state SSZ decoding - header size analysis",
+                );
+                
+                // Log the expected fixed portion calculation
+                info!(
+                    expected_fixed_portion_before_header = header_start_offset,
+                    expected_header_size = expected_header_size,
+                    expected_fixed_portion_after_header = header_start_offset + expected_header_size,
+                    "Expected SSZ fixed portion calculation (Lighthouse expects {} byte header)",
+                    expected_header_size
+                );
+                
+                // Try to peek at the header bytes to see what size it actually is
+                if bytes_ref.len() >= header_start_offset + 112 {
+                    // Check if it looks like a 112-byte header (standard) or 8305-byte header (TEE)
+                    let header_end_112 = header_start_offset + 112;
+                    let header_end_8305 = header_start_offset + 8305;
+                    
+                    if bytes_ref.len() >= header_end_112 {
+                        let header_bytes_112 = &bytes_ref[header_start_offset..header_end_112];
+                        debug!(
+                            header_start_offset = header_start_offset,
+                            header_bytes_112_len = header_bytes_112.len(),
+                            "Peeked at first 112 bytes of header position"
+                        );
+                    }
+                    
+                    if bytes_ref.len() >= header_end_8305 {
+                        let header_bytes_8305 = &bytes_ref[header_start_offset..header_end_8305];
+                        info!(
+                            header_start_offset = header_start_offset,
+                            header_bytes_8305_len = header_bytes_8305.len(),
+                            "Peeked at full 8305 bytes of header position - header appears to be TEE-sized in SSZ bytes"
+                        );
+                    } else {
+                        warn!(
+                            header_start_offset = header_start_offset,
+                            bytes_available_after_header_start = bytes_ref.len() - header_start_offset,
+                            expected_tee_header_size = 8305,
+                            expected_standard_header_size = 112,
+                            "Not enough bytes for TEE header (8305 bytes) at expected position - might be standard 112-byte header"
+                        );
+                    }
+                } else {
+                    warn!(
+                        header_start_offset = header_start_offset,
+                        total_bytes = bytes_ref.len(),
+                        "Not enough bytes to reach header start position - SSZ structure might be malformed"
+                    );
+                }
+                
+                // Analyze offset values in the SSZ structure to detect mismatches
+                // SSZ stores offsets as 4-byte little-endian values after fixed-length fields
+                // For BeaconState, offsets start after ALL fixed-length fields including BlockRoots and StateRoots
+                // Fixed portion: genesis_time(8) + genesis_validators_root(32) + slot(8) + fork(16) + header(variable) + BlockRoots(8192*32) + StateRoots(8192*32)
+                let block_roots_size = 8192 * 32; // 262144
+                let state_roots_size = 8192 * 32; // 262144
+                let expected_fixed_portion_end = header_start_offset + expected_header_size + block_roots_size + state_roots_size;
+                if bytes_ref.len() > expected_fixed_portion_end + 4 {
+                    // Read first few offset values to see what they point to
+                    // SSZ offsets are 4-byte little-endian u32 values
+                    let mut offset_values = Vec::new();
+                    for i in 0..10.min((bytes_ref.len() - expected_fixed_portion_end) / 4) {
+                        let offset_pos = expected_fixed_portion_end + i * 4;
+                        if offset_pos + 4 <= bytes_ref.len() {
+                            let offset_bytes = [
+                                bytes_ref[offset_pos],
+                                bytes_ref[offset_pos + 1],
+                                bytes_ref[offset_pos + 2],
+                                bytes_ref[offset_pos + 3],
+                            ];
+                            let offset_val = u32::from_le_bytes(offset_bytes) as usize;
+                            offset_values.push((offset_pos, offset_val));
+                        }
+                    }
+                    
+                    info!(
+                        expected_fixed_portion_end = expected_fixed_portion_end,
+                        first_offset_position = expected_fixed_portion_end,
+                        offset_values = ?offset_values.iter().take(5).map(|(pos, val)| format!("pos={}, val={}", pos, val)).collect::<Vec<_>>(),
+                        "SSZ offset values analysis - checking if offsets point beyond fixed portion"
+                    );
+                    
+                    // Check if any offsets point into the fixed portion
+                    for (offset_pos, offset_val) in &offset_values {
+                        if *offset_val < expected_fixed_portion_end {
+                            let possible_standard_fixed_end = header_start_offset + 112 + block_roots_size + state_roots_size;
+                            let would_be_valid_with_standard = *offset_val >= possible_standard_fixed_end;
+                            
+                            warn!(
+                                offset_position = offset_pos,
+                                offset_value = offset_val,
+                                expected_fixed_portion_end = expected_fixed_portion_end,
+                                possible_standard_fixed_end = possible_standard_fixed_end,
+                                would_be_valid_with_standard_header = would_be_valid_with_standard,
+                                "⚠️  OFFSET MISMATCH: Offset at position {} has value {} which points INTO fixed portion (ends at {}). With standard {} byte header, fixed portion would end at {}, and this offset would be {}",
+                                offset_pos, offset_val, expected_fixed_portion_end, 112, possible_standard_fixed_end,
+                                if would_be_valid_with_standard { "VALID" } else { "STILL INVALID" }
+                            );
+                            
+                            // Special case: offset 0 often means "empty list starts immediately after fixed portion"
+                            if *offset_val == 0 {
+                                warn!(
+                                    "🔍 CRITICAL FINDING: Offset value is 0 at position {}. In SSZ, offset 0 typically means variable-length data starts immediately after fixed portion. Genesis generator likely calculated this assuming fixed portion ends at {} (with {} byte header), but Lighthouse expects {} (with {} byte header). Difference: {} bytes",
+                                    offset_pos, possible_standard_fixed_end, 112, expected_fixed_portion_end, expected_header_size,
+                                    expected_fixed_portion_end - possible_standard_fixed_end
+                                );
+                            }
+                        } else {
+                            debug!(
+                                offset_position = offset_pos,
+                                offset_value = offset_val,
+                                expected_fixed_portion_end = expected_fixed_portion_end,
+                                "✅ Offset correctly points beyond fixed portion"
+                            );
+                        }
+                    }
+                    
+                    // Calculate what fixed portion size the genesis generator might have used
+                    // If offsets are pointing to locations that suggest a different fixed portion size
+                    if let Some((_, first_offset_val)) = offset_values.first() {
+                        let possible_standard_fixed_end = header_start_offset + 112 + block_roots_size + state_roots_size;
+                        if *first_offset_val == possible_standard_fixed_end {
+                            warn!(
+                                first_offset_value = first_offset_val,
+                                possible_standard_fixed_end = possible_standard_fixed_end,
+                                expected_fixed_portion_end = expected_fixed_portion_end,
+                                "🔍 GENESIS GENERATOR ANALYSIS: First offset points to {}, suggesting genesis generator used {} byte header (standard) instead of {} byte header (TEE)",
+                                first_offset_val, 112, expected_header_size
+                            );
+                        } else if *first_offset_val >= expected_fixed_portion_end {
+                            info!(
+                                first_offset_value = first_offset_val,
+                                expected_fixed_portion_end = expected_fixed_portion_end,
+                                "✅ First offset correctly points beyond fixed portion (ends at {})",
+                                expected_fixed_portion_end
+                            );
+                        }
+                    }
+                    
+                    // The error says offset 2736713 points into fixed portion
+                    // This means at position 2736713, there's an offset value that's < 8369
+                    // Let's check what offset value is stored around that position
+                    let error_offset_position = 2736713;
+                    if error_offset_position < bytes_ref.len() {
+                        // Check offset values near the error position
+                        let check_start = error_offset_position.saturating_sub(20).max(expected_fixed_portion_end);
+                        let check_end = (error_offset_position + 20).min(bytes_ref.len());
+                        
+                        warn!(
+                            error_offset_position = error_offset_position,
+                            checking_range_start = check_start,
+                            checking_range_end = check_end,
+                            expected_fixed_portion_end = expected_fixed_portion_end,
+                            "🔍 ERROR OFFSET ANALYSIS: Checking offset values near error position {}",
+                            error_offset_position
+                        );
+                        
+                        // Read offset values in this range
+                        let mut error_range_offsets = Vec::new();
+                        for pos in (check_start..check_end).step_by(4) {
+                            if pos + 4 <= bytes_ref.len() {
+                                let offset_bytes = [
+                                    bytes_ref[pos],
+                                    bytes_ref[pos + 1],
+                                    bytes_ref[pos + 2],
+                                    bytes_ref[pos + 3],
+                                ];
+                                let offset_val = u32::from_le_bytes(offset_bytes) as usize;
+                                error_range_offsets.push((pos, offset_val));
+                                
+                                // Check if this offset points into fixed portion
+                                if offset_val < expected_fixed_portion_end && offset_val > 0 {
+                                    warn!(
+                                        offset_position = pos,
+                                        offset_value = offset_val,
+                                        expected_fixed_portion_end = expected_fixed_portion_end,
+                                        distance_from_error_pos = error_offset_position.saturating_sub(pos),
+                                        "⚠️  FOUND PROBLEMATIC OFFSET: At position {} ({} bytes before error), offset value {} points INTO fixed portion (ends at {})",
+                                        pos, error_offset_position.saturating_sub(pos), offset_val, expected_fixed_portion_end
+                                    );
+                                }
+                            }
+                        }
+                        
+                        info!(
+                            error_range_offsets = ?error_range_offsets.iter().map(|(pos, val)| format!("pos={}, val={}", pos, val)).collect::<Vec<_>>(),
+                            "Offset values near error position"
+                        );
+                    }
+                }
+
                 match BeaconState::from_ssz_bytes(bytes_ref, &spec) {
                     Ok(state) => {
                         // Verify TEE fields by checking the latest block header if available
                         let latest_block_header = state.latest_block_header();
-                        use ssz::Encode;
                         let header_size = latest_block_header.as_ssz_bytes().len();
+                        
                         info!(
                             "🔍 Genesis block header size: {} bytes (expected TEE: 8305, standard: 112)",
                             header_size
@@ -325,20 +548,99 @@ impl Eth2NetworkConfig {
                             header_size = header_size,
                             expected_tee_header_size = 8305,
                             expected_standard_header_size = 112,
+                            header_slot = latest_block_header.slot.as_u64(),
+                            header_proposer_index = latest_block_header.proposer_index,
                             "Latest block header size check (TEE header should be ~8305 bytes, standard is 112)",
                         );
+                        
+                        // Additional validation: check if header size matches expectations
+                        let expected_tee_size: usize = 8305;
+                        let expected_standard_size: usize = 112;
+                        if header_size != expected_tee_size && header_size != expected_standard_size {
+                            warn!(
+                                header_size = header_size,
+                                expected_tee_header_size = 8305,
+                                expected_standard_header_size = 112,
+                                "Unexpected block header size - neither TEE nor standard size",
+                            );
+                        }
+                        
                         Ok(state)
                     }
                     Err(e) => {
-                        // Enhanced error logging with offset details
-                        let error_details = if let ssz::DecodeError::OffsetIntoFixedPortion(offset) = &e {
-                            format!(
-                                "OffsetIntoFixedPortion at byte {} (total bytes: {})",
-                                offset,
-                                bytes_ref.len()
-                            )
-                        } else {
-                            format!("{:?}", e)
+                        // Enhanced error logging with offset details and SSZ structure analysis
+                        let error_details = match &e {
+                            DecodeError::OffsetIntoFixedPortion(offset) => {
+                                let offset_value: usize = *offset;
+                                let bytes_len: usize = bytes_ref.len();
+                                let offset_percentage = (offset_value * 100) / bytes_len.max(1);
+                                let bytes_before_offset = offset_value;
+                                let bytes_after_offset = bytes_len.saturating_sub(offset_value);
+                                
+                                // Calculate expected fixed portion with TEE header
+                                let expected_fixed_start: usize = genesis_time_len + genesis_validators_root_len + slot_len + fork_len;
+                                let expected_fixed_with_tee_header = expected_fixed_start + expected_header_size;
+                                let expected_fixed_with_standard_header = expected_fixed_start + 112;
+                                
+                                // Try to analyze what might be at this offset
+                                let analysis = if offset_value < bytes_len {
+                                    if offset_value < expected_fixed_start {
+                                        format!("Offset {} is in the initial fixed portion (before latest_block_header at offset {})", offset_value, expected_fixed_start)
+                                    } else if offset_value < expected_fixed_start + expected_header_size {
+                                        format!("Offset {} is within latest_block_header (header starts at offset {}, Lighthouse expects {} bytes)", offset_value, expected_fixed_start, expected_header_size)
+                                    } else {
+                                        format!("Offset {} is beyond the initial fixed fields (expected fixed portion end: {} with TEE header, {} with standard header)", offset_value, expected_fixed_with_tee_header, expected_fixed_with_standard_header)
+                                    }
+                                } else {
+                                    "Offset exceeds total bytes".to_string()
+                                };
+                                
+                                // Check if the issue is likely a header size mismatch
+                                let header_size_mismatch_hint = if offset_value >= expected_fixed_start && offset_value < expected_fixed_with_tee_header {
+                                    format!(
+                                        "⚠️  HEADER SIZE MISMATCH DETECTED: Lighthouse expects {} byte TEE header, but genesis file might have {} byte standard header. Fixed portion mismatch: expected {} bytes (with TEE) vs {} bytes (with standard)",
+                                        expected_header_size, 112, expected_fixed_with_tee_header, expected_fixed_with_standard_header
+                                    )
+                                } else {
+                                    String::new()
+                                };
+                                
+                                warn!(
+                                    offset = offset_value,
+                                    total_bytes = bytes_len,
+                                    offset_percentage = offset_percentage,
+                                    bytes_before_offset = bytes_before_offset,
+                                    bytes_after_offset = bytes_after_offset,
+                                    expected_header_size = expected_header_size,
+                                    expected_fixed_start = expected_fixed_start,
+                                    expected_fixed_with_tee_header = expected_fixed_with_tee_header,
+                                    expected_fixed_with_standard_header = expected_fixed_with_standard_header,
+                                    analysis = %analysis,
+                                    header_size_mismatch_hint = %header_size_mismatch_hint,
+                                    "SSZ decode error: OffsetIntoFixedPortion - detailed analysis",
+                                );
+                                
+                                format!(
+                                    "OffsetIntoFixedPortion at byte {} ({}% into {} total bytes). {}. {}",
+                                    offset_value, offset_percentage, bytes_len, analysis, header_size_mismatch_hint
+                                )
+                            }
+                            DecodeError::InvalidByteLength { len, expected } => {
+                                let difference = expected.saturating_sub(*len);
+                                warn!(
+                                    actual_len = len,
+                                    expected_len = expected,
+                                    difference = difference,
+                                    "SSZ decode error: InvalidByteLength",
+                                );
+                                format!(
+                                    "InvalidByteLength: got {} bytes, expected {} bytes (difference: {})",
+                                    len, expected, difference
+                                )
+                            }
+                            _ => {
+                                format!("{:?}", e)
+                            }
                         };
 
                         warn!(
@@ -350,10 +652,10 @@ impl Eth2NetworkConfig {
                             ?genesis_fork,
                             genesis_source = %genesis_source,
                             fork_epochs = %fork_epochs,
-                            "Genesis state SSZ bytes failed to decode",
+                            "Built-in genesis state SSZ bytes failed to decode",
                         );
                         Err(format!(
-                            "Genesis state SSZ bytes are invalid: {}",
+                            "Built-in genesis state SSZ bytes are invalid: {}",
                             error_details
                         ))
                     }

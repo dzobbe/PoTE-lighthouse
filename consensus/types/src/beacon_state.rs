@@ -2337,7 +2337,7 @@ impl<E: EthSpec> BeaconState<E> {
         let start_index = pubkey_cache.len();
         let validators_len = self.validators().len();
 
-        tracing::debug!(
+        tracing::info!(
             cache_len = start_index,
             validators_len = validators_len,
             validators_to_add = validators_len.saturating_sub(start_index),
@@ -3086,18 +3086,55 @@ impl<E: EthSpec> BeaconState<E> {
     #[allow(clippy::arithmetic_side_effects)]
     pub fn from_ssz_bytes(bytes: &[u8], spec: &ChainSpec) -> Result<Self, ssz::DecodeError> {
         // Slot is after genesis_time (u64) and genesis_validators_root (Hash256).
-        let slot_start = <u64 as Decode>::ssz_fixed_len() + <Hash256 as Decode>::ssz_fixed_len();
-        let slot_end = slot_start + <Slot as Decode>::ssz_fixed_len();
+        let genesis_time_len = <u64 as Decode>::ssz_fixed_len();
+        let genesis_validators_root_len = <Hash256 as Decode>::ssz_fixed_len();
+        let slot_len = <Slot as Decode>::ssz_fixed_len();
+        let slot_start = genesis_time_len + genesis_validators_root_len;
+        let slot_end = slot_start + slot_len;
+
+        tracing::info!(
+            total_bytes = bytes.len(),
+            genesis_time_offset = 0,
+            genesis_time_len = genesis_time_len,
+            genesis_validators_root_offset = genesis_time_len,
+            genesis_validators_root_len = genesis_validators_root_len,
+            slot_offset = slot_start,
+            slot_len = slot_len,
+            "Extracting slot from BeaconState SSZ bytes",
+        );
 
         let slot_bytes = bytes
             .get(slot_start..slot_end)
-            .ok_or(DecodeError::InvalidByteLength {
-                len: bytes.len(),
-                expected: slot_end,
+            .ok_or_else(|| {
+                tracing::error!(
+                    total_bytes = bytes.len(),
+                    expected_slot_end = slot_end,
+                    "Failed to extract slot bytes: insufficient data"
+                );
+                DecodeError::InvalidByteLength {
+                    len: bytes.len(),
+                    expected: slot_end,
+                }
             })?;
 
         let slot = Slot::from_ssz_bytes(slot_bytes)?;
         let fork_at_slot = spec.fork_name_at_slot::<E>(slot);
+
+        tracing::info!(
+            slot = slot.as_u64(),
+            fork = ?fork_at_slot,
+            total_bytes = bytes.len(),
+            "Decoding BeaconState: extracted slot and determined fork",
+        );
+
+        // Log expected header size for reference
+        let expected_header_size = <BeaconBlockHeader as Decode>::ssz_fixed_len();
+        tracing::info!(
+            expected_header_size = expected_header_size,
+            expected_tee_header_size = 8305,
+            expected_standard_header_size = 112,
+            "Expected BeaconBlockHeader size in SSZ structure (will be verified after successful decode)",
+        );
 
         let result = (|| -> Result<Self, ssz::DecodeError> {
             let state = map_fork_name!(fork_at_slot, Self, <_>::from_ssz_bytes(bytes)?);
@@ -3105,18 +3142,42 @@ impl<E: EthSpec> BeaconState<E> {
         })();
 
         if let Err(ref err) = result {
+            // Enhanced error logging with SSZ structure details
+            let error_details = match err {
+                DecodeError::OffsetIntoFixedPortion(offset) => {
+                    tracing::error!(
+                        offset = offset,
+                        total_bytes = bytes.len(),
+                        offset_percentage = (offset * 100) / bytes.len().max(1),
+                        "SSZ decode error: Offset points into fixed portion",
+                    );
+                    format!("OffsetIntoFixedPortion at byte {} ({}% into {} total bytes)", 
+                        offset, (offset * 100) / bytes.len().max(1), bytes.len())
+                }
+                DecodeError::InvalidByteLength { len, expected } => {
+                    tracing::error!(
+                        actual_len = len,
+                        expected_len = expected,
+                        difference = expected.saturating_sub(*len),
+                        "SSZ decode error: Invalid byte length",
+                    );
+                    format!("InvalidByteLength: got {} bytes, expected {}", len, expected)
+                }
+                _ => format!("{:?}", err),
+            };
+
             eprintln!(
-                "BeaconState::from_ssz_bytes failed: len={} slot={} fork={:?} err={:?}",
+                "BeaconState::from_ssz_bytes failed: len={} slot={} fork={:?} err={}",
                 bytes.len(),
                 slot.as_u64(),
                 fork_at_slot,
-                err
+                error_details
             );
-            tracing::debug!(
+            tracing::error!(
                 bytes_len = bytes.len(),
                 slot = slot.as_u64(),
                 fork = ?fork_at_slot,
-                error = ?err,
+                error = %error_details,
                 "BeaconState::from_ssz_bytes failed",
             );
         }
