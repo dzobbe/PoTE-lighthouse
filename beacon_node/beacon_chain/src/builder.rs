@@ -317,6 +317,11 @@ where
 
         let beacon_block = genesis_block(&mut beacon_state, &self.spec)?;
 
+        // Update the state's latest_block_header to match the actual genesis block.
+        // This ensures that when fork choice recalculates the block root from the header,
+        // it will match the root of the actual stored block (important for TEE-extended headers).
+        *beacon_state.latest_block_header_mut() = beacon_block.message().block_header();
+
         beacon_state
             .build_caches(&self.spec)
             .map_err(|e| format!("Failed to build genesis state caches: {:?}", e))?;
