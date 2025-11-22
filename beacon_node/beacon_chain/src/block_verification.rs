@@ -981,10 +981,19 @@ impl<T: BeaconChainTypes> GossipVerifiedBlock<T> {
         // NOTE: Signature verification uses block_root computed from the block header.
         // For blocks with TEE fields, the block header may have placeholder TEE fields while
         // the state's latest_block_header has real TEE fields. The signature should be computed
-        // and verified using the same TEE fields. Currently, blocks are signed with placeholder
-        // TEE fields (via block.block_header()), so verification with placeholder TEE fields
-        // should work. If signature verification fails, it may indicate that the block was
-        // signed with different TEE fields than expected.
+        // and verified using the same TEE fields.
+        //
+        // ISSUE: For locally produced blocks, the validator client signs in a separate process,
+        // so thread-local TEE fields don't work. The block is signed with placeholder TEE fields
+        // (via block.block_header()), but the state's latest_block_header has real TEE fields.
+        // This causes signature verification to fail because the block was signed with one root
+        // (placeholder TEE fields) but the state expects a different root (real TEE fields).
+        //
+        // TODO: Fix by passing TEE fields through the HTTP API response metadata so the validator
+        // client can use them when signing blocks. This requires:
+        // 1. Adding TEE fields to ProduceBlockV3Metadata
+        // 2. Modifying the validator client to use TEE fields when computing signing_root
+        // 3. Ensuring blocks are signed with real TEE fields matching the state's latest_block_header
         let signature_is_valid = {
             let pubkey_cache = get_validator_pubkey_cache(chain)?;
             let pubkey = pubkey_cache

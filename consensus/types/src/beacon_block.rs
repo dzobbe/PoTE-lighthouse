@@ -1,4 +1,5 @@
 use crate::attestation::AttestationBase;
+use crate::tee_attestation::TEEQuote;
 use crate::tee_types::TEEType;
 use crate::test_utils::TestRandom;
 use crate::*;
@@ -6,12 +7,45 @@ use derivative::Derivative;
 use serde::{Deserialize, Deserializer, Serialize};
 use ssz::{Decode, DecodeError};
 use ssz_derive::{Decode, Encode};
+use std::cell::RefCell;
 use std::fmt;
 use std::marker::PhantomData;
 use superstruct::superstruct;
 use test_random_derive::TestRandom;
 use tree_hash::TreeHash;
 use tree_hash_derive::TreeHash;
+
+/// Thread-local storage for TEE fields during block production.
+/// This allows `canonical_root()` to use real TEE fields when available.
+thread_local! {
+    static BLOCK_TEE_FIELDS: RefCell<Option<(TEEType, TEEQuote)>> = RefCell::new(None);
+}
+
+/// Set TEE fields for the current thread during block production.
+/// This should be called before computing block roots or signing blocks.
+pub fn set_block_tee_fields(tee_type: TEEType, tee_quote: TEEQuote) {
+    BLOCK_TEE_FIELDS.with(|fields| {
+        *fields.borrow_mut() = Some((tee_type, tee_quote));
+    });
+}
+
+/// Clear TEE fields for the current thread.
+/// This should be called after block production is complete.
+pub fn clear_block_tee_fields() {
+    BLOCK_TEE_FIELDS.with(|fields| {
+        *fields.borrow_mut() = None;
+    });
+}
+
+/// Get TEE fields for the current thread, if available.
+fn get_block_tee_fields() -> Option<(TEEType, TEEQuote)> {
+    BLOCK_TEE_FIELDS.with(|fields| fields.borrow().clone())
+}
+
+/// Get TEE fields for the current thread, if available (public for debugging).
+pub fn get_block_tee_fields_debug() -> Option<(TEEType, TEEQuote)> {
+    get_block_tee_fields()
+}
 
 use self::indexed_attestation::IndexedAttestationBase;
 
@@ -170,10 +204,17 @@ impl<E: EthSpec, Payload: AbstractExecPayload<E>> BeaconBlock<E, Payload> {
     ///
     /// NOTE: For locally produced blocks, ensure the header has real TEE fields by updating
     /// the state's `latest_block_header` before calculating the root.
+    ///
+    /// If TEE fields are set via `set_block_tee_fields()`, they will be used instead of placeholders.
     pub fn canonical_root(&self) -> Hash256 {
         // Return the header root, which includes TEE fields for TEE-extended blocks
         // This ensures consistency: block root == header root
-        self.block_header().canonical_root()
+        // Check if real TEE fields are available (set during block production)
+        if let Some((tee_type, tee_quote)) = get_block_tee_fields() {
+            self.block_header_with_tee(tee_type, tee_quote).canonical_root()
+        } else {
+            self.block_header().canonical_root()
+        }
     }
 
     /// Returns a full `BeaconBlockHeader` of this block.
@@ -290,10 +331,17 @@ impl<'a, E: EthSpec, Payload: AbstractExecPayload<E>> BeaconBlockRef<'a, E, Payl
     ///
     /// NOTE: For locally produced blocks, ensure the header has real TEE fields by updating
     /// the state's `latest_block_header` before calculating the root.
+    ///
+    /// If TEE fields are set via `set_block_tee_fields()`, they will be used instead of placeholders.
     pub fn canonical_root(&self) -> Hash256 {
         // Return the header root, which includes TEE fields for TEE-extended blocks
         // This ensures consistency: block root == header root
-        self.block_header().canonical_root()
+        // Check if real TEE fields are available (set during block production)
+        if let Some((tee_type, tee_quote)) = get_block_tee_fields() {
+            self.block_header_with_tee(tee_type, tee_quote).canonical_root()
+        } else {
+            self.block_header().canonical_root()
+        }
     }
 
     /// Returns a full `BeaconBlockHeader` of this block.

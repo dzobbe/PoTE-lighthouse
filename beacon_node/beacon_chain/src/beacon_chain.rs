@@ -4537,13 +4537,20 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
         // For TDX: Use Intel TDX attestation
         // For CCA: Use ARM CCA attestation
         
-        warn!(
+        // For testing: Generate a random 8192-byte quote
+        // This ensures each block production gets a unique quote
+        use rand::{Rng, RngCore};
+        let mut rng = rand::thread_rng();
+        let mut random_bytes = [0u8; types::tee_attestation::TEE_QUOTE_SIZE];
+        rng.fill_bytes(&mut random_bytes);
+        
+        info!(
             proposer_index = proposer_index,
             tee_type = ?tee_type,
-            "No TEE quote found in environment variables, using default empty quote. In production, implement system TEE attestation retrieval."
+            "No TEE quote found in environment variables, generating random 8192-byte quote for testing"
         );
         
-        TEEQuote::default()
+        TEEQuote::from_bytes(random_bytes)
     }
 
     pub async fn produce_block_with_verification(
@@ -5875,17 +5882,41 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
         // Format: base64-encoded quote from TEE_PROPOSER_ATTESTATION env var, or empty quote
         let proposer_tee_quote = Self::get_tee_quote_for_proposer(proposer_index, &proposer_tee_type);
 
+        // Set TEE fields in thread-local storage so that canonical_root() and signing use real TEE fields
+        // This ensures that when the block is signed, it uses real TEE fields instead of placeholders
+        types::beacon_block::set_block_tee_fields(proposer_tee_type.clone(), proposer_tee_quote.clone());
+        
+        // Verify TEE fields are set in thread-local storage
+        let tee_fields_check = types::beacon_block::get_block_tee_fields_debug();
+        debug!(
+            slot = slot.as_u64(),
+            proposer_index = proposer_index,
+            tee_fields_set = tee_fields_check.is_some(),
+            "TEE fields set in thread-local storage"
+        );
+
         // Update the state's latest_block_header with real TEE fields
         // This ensures that when the next block references this block, it uses the correct header root
         let block_header_with_tee = block.block_header_with_tee(proposer_tee_type.clone(), proposer_tee_quote.clone());
         *state.latest_block_header_mut() = block_header_with_tee.clone();
 
-        // NOTE: block.canonical_root() now returns header.canonical_root() (see BeaconBlock::canonical_root()),
-        // so they should match. However, block.canonical_root() uses block_header() which has placeholder
-        // TEE fields, while block_header_with_tee has real TEE fields. We update the state's header
-        // with real TEE fields so that future block references use the correct root.
+        // NOTE: With TEE fields set in thread-local storage, block.canonical_root() should now
+        // use real TEE fields instead of placeholders. This ensures that when the block is signed,
+        // it uses real TEE fields, matching the state's latest_block_header.
+        // 
+        // IMPORTANT: This works when signing happens in the same thread. For validator clients
+        // running in separate processes, TEE fields need to be passed separately or included
+        // in the block structure.
         let block_root_from_header = block_header_with_tee.canonical_root();
-        let block_root_from_block = block.canonical_root(); // This uses block_header() with placeholders
+        let block_root_from_block = block.canonical_root(); // Should now use real TEE fields via thread-local
+        
+        // Double-check TEE fields are still available when computing block root
+        let tee_fields_check_after = types::beacon_block::get_block_tee_fields_debug();
+        debug!(
+            slot = slot.as_u64(),
+            tee_fields_still_set = tee_fields_check_after.is_some(),
+            "TEE fields check after canonical_root() call"
+        );
         
         info!(
             slot = slot.as_u64(),
@@ -5894,20 +5925,15 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
             block_root_from_block = %block_root_from_block,
             block_root_from_header = %block_root_from_header,
             roots_match = block_root_from_block == block_root_from_header,
-            "🔍 Block production: Using real TEE fields for proposer. State header updated with real TEE fields."
+            "🔍 Block production: Using real TEE fields for proposer. Block root should match header root."
         );
         
-        // NOTE: block.canonical_root() uses block_header() which has placeholder TEE fields.
-        // For consistency, we should use the header root with real TEE fields. However, since
-        // we've updated the state's latest_block_header with real TEE fields, the next block
-        // will reference this block correctly. The block root calculation itself will use
-        // placeholders until we modify BeaconBlock to store TEE fields or modify block_header()
-        // to accept TEE fields.
+        // Verify that block root matches header root (they should now match with real TEE fields)
         if block_root_from_block != block_root_from_header {
             warn!(
                 block_root_from_block = %block_root_from_block,
                 block_root_from_header = %block_root_from_header,
-                "⚠️  Block root uses placeholder TEE fields: block.canonical_root() ({}) differs from header.canonical_root() with real TEE fields ({}). State header updated with real TEE fields for consistency.",
+                "⚠️  Block root mismatch: block.canonical_root() ({}) differs from header.canonical_root() with real TEE fields ({}). This should not happen with thread-local TEE fields set.",
                 block_root_from_block, block_root_from_header
             );
         }
@@ -5943,6 +5969,10 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
             slot = %block.slot(),
             "Produced beacon block"
         );
+
+        // Clear TEE fields from thread-local storage after block production is complete
+        // This prevents them from being used for other blocks
+        types::beacon_block::clear_block_tee_fields();
 
         Ok(BeaconBlockResponse {
             block,
