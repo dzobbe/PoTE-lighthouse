@@ -317,17 +317,31 @@ where
 
         let beacon_block = genesis_block(&mut beacon_state, &self.spec)?;
 
-        // Update the state's latest_block_header to match the actual genesis block.
-        // This ensures that when fork choice recalculates the block root from the header,
-        // it will match the root of the actual stored block (important for TEE-extended headers).
-        *beacon_state.latest_block_header_mut() = beacon_block.message().block_header();
+        // Update the state's latest_block_header.state_root to match the actual genesis block.
+        // CRITICAL: We preserve the TEE fields from the state's header (which came from SSZ with
+        // real TEE fields) and only update the state_root. If we replace the entire header with
+        // beacon_block.message().block_header(), it would use placeholder TEE fields, causing
+        // root mismatches and "ParentUnknown" errors.
+        let actual_state_root = beacon_block.message().state_root();
+        beacon_state.latest_block_header_mut().state_root = actual_state_root;
 
         beacon_state
             .build_caches(&self.spec)
             .map_err(|e| format!("Failed to build genesis state caches: {:?}", e))?;
 
         let beacon_state_root = beacon_block.message().state_root();
-        let beacon_block_root = beacon_block.canonical_root();
+        // CRITICAL: Use the state's header root (with real TEE fields from SSZ) as the block root.
+        // The block's canonical_root() uses block_header() which has placeholder TEE fields, causing
+        // root mismatches. The state's header has the real TEE fields from the SSZ-decoded genesis file.
+        let beacon_block_root = beacon_state.latest_block_header().canonical_root();
+
+        info!(
+            genesis_state_root = %beacon_state_root,
+            genesis_block_root = %beacon_block_root,
+            block_canonical_root = %beacon_block.canonical_root(),
+            header_has_real_tee = beacon_block_root != beacon_block.canonical_root(),
+            "🔍 Genesis: Using state header root (with real TEE fields) as block root"
+        );
 
         store
             .put_state(&beacon_state_root, &beacon_state)

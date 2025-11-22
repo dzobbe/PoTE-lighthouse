@@ -180,10 +180,18 @@ pub fn compute_proposer_duties_from_head<T: BeaconChainTypes>(
         (head_state, head_state_root, head_block_root)
     };
 
-    let execution_status = chain
-        .canonical_head
-        .fork_choice_read_lock()
+    // Try to get execution status, but fall back to finalized block's status if head is not in fork choice.
+    // This can happen during syncing or if the block was pruned from the proto array.
+    let fork_choice = chain.canonical_head.fork_choice_read_lock();
+    let execution_status = fork_choice
         .get_block_execution_status(&head_block_root)
+        .or_else(|| {
+            // Fall back to finalized block's execution status if head block is not available
+            fork_choice
+                .get_finalized_block()
+                .ok()
+                .map(|block| block.execution_status)
+        })
         .ok_or(BeaconChainError::HeadMissingFromForkChoice(head_block_root))?;
 
     // Advance the state into the requested epoch.

@@ -163,9 +163,17 @@ impl<E: EthSpec, Payload: AbstractExecPayload<E>> BeaconBlock<E, Payload> {
         self.slot().epoch(E::slots_per_epoch())
     }
 
-    /// Returns the `tree_hash_root` of the block.
+    /// Returns the canonical root of the block.
+    ///
+    /// In Ethereum, the block root IS the header root. This method returns the header root
+    /// (which includes TEE fields for TEE-extended blocks) rather than the block's tree hash.
+    ///
+    /// NOTE: For locally produced blocks, ensure the header has real TEE fields by updating
+    /// the state's `latest_block_header` before calculating the root.
     pub fn canonical_root(&self) -> Hash256 {
-        self.tree_hash_root()
+        // Return the header root, which includes TEE fields for TEE-extended blocks
+        // This ensures consistency: block root == header root
+        self.block_header().canonical_root()
     }
 
     /// Returns a full `BeaconBlockHeader` of this block.
@@ -176,6 +184,18 @@ impl<E: EthSpec, Payload: AbstractExecPayload<E>> BeaconBlock<E, Payload> {
     /// Note: performs a full tree-hash of `self.body`.
     pub fn block_header(&self) -> BeaconBlockHeader {
         self.to_ref().block_header()
+    }
+
+    /// Returns a full `BeaconBlockHeader` of this block with real TEE fields.
+    /// 
+    /// This should be used during block production to ensure the block root matches
+    /// the header root calculated with real TEE fields.
+    pub fn block_header_with_tee(
+        &self,
+        proposer_tee_type: crate::tee_types::TEEType,
+        proposer_tee_quote: crate::tee_attestation::TEEQuote,
+    ) -> BeaconBlockHeader {
+        self.to_ref().block_header_with_tee(proposer_tee_type, proposer_tee_quote)
     }
 
     /// Returns a "temporary" header, where the `state_root` is `Hash256::zero()`.
@@ -263,7 +283,23 @@ impl<'a, E: EthSpec, Payload: AbstractExecPayload<E>> BeaconBlockRef<'a, E, Payl
         self.slot().epoch(E::slots_per_epoch())
     }
 
+    /// Returns the canonical root of the block.
+    ///
+    /// In Ethereum, the block root IS the header root. This method returns the header root
+    /// (which includes TEE fields for TEE-extended blocks) rather than the block's tree hash.
+    ///
+    /// NOTE: For locally produced blocks, ensure the header has real TEE fields by updating
+    /// the state's `latest_block_header` before calculating the root.
+    pub fn canonical_root(&self) -> Hash256 {
+        // Return the header root, which includes TEE fields for TEE-extended blocks
+        // This ensures consistency: block root == header root
+        self.block_header().canonical_root()
+    }
+
     /// Returns a full `BeaconBlockHeader` of this block.
+    /// 
+    /// NOTE: This method uses placeholder TEE fields. For block production, use
+    /// `block_header_with_tee()` instead to use real TEE fields from the validator.
     pub fn block_header(&self) -> BeaconBlockHeader {
         BeaconBlockHeader {
             slot: self.slot(),
@@ -273,6 +309,26 @@ impl<'a, E: EthSpec, Payload: AbstractExecPayload<E>> BeaconBlockRef<'a, E, Payl
             body_root: self.body_root(),
             proposer_tee_type: BeaconBlockHeader::placeholder_tee_type(),
             proposer_tee_quote: BeaconBlockHeader::create_placeholder_tee_quote(),
+        }
+    }
+
+    /// Returns a full `BeaconBlockHeader` of this block with real TEE fields.
+    /// 
+    /// This should be used during block production to ensure the block root matches
+    /// the header root calculated with real TEE fields.
+    pub fn block_header_with_tee(
+        &self,
+        proposer_tee_type: crate::tee_types::TEEType,
+        proposer_tee_quote: crate::tee_attestation::TEEQuote,
+    ) -> BeaconBlockHeader {
+        BeaconBlockHeader {
+            slot: self.slot(),
+            proposer_index: self.proposer_index(),
+            parent_root: self.parent_root(),
+            state_root: self.state_root(),
+            body_root: self.body_root(),
+            proposer_tee_type,
+            proposer_tee_quote,
         }
     }
 

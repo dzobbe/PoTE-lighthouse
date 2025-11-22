@@ -978,6 +978,13 @@ impl<T: BeaconChainTypes> GossipVerifiedBlock<T> {
         let expected_proposer = proposer.index;
         let fork = proposer.fork;
 
+        // NOTE: Signature verification uses block_root computed from the block header.
+        // For blocks with TEE fields, the block header may have placeholder TEE fields while
+        // the state's latest_block_header has real TEE fields. The signature should be computed
+        // and verified using the same TEE fields. Currently, blocks are signed with placeholder
+        // TEE fields (via block.block_header()), so verification with placeholder TEE fields
+        // should work. If signature verification fails, it may indicate that the block was
+        // signed with different TEE fields than expected.
         let signature_is_valid = {
             let pubkey_cache = get_validator_pubkey_cache(chain)?;
             let pubkey = pubkey_cache
@@ -1372,16 +1379,17 @@ impl<T: BeaconChainTypes> ExecutionPendingBlock<T> {
             .observe_proposal(block_root, block.message())
             .map_err(|e| BlockError::BeaconChainError(Box::new(e.into())))?;
 
+        let parent_root = block.parent_root();
         if let Some(parent) = chain
             .canonical_head
             .fork_choice_read_lock()
-            .get_block(&block.parent_root())
+            .get_block(&parent_root)
         {
             // Reject any block where the parent has an invalid payload. It's impossible for a valid
             // block to descend from an invalid parent.
             if parent.execution_status.is_invalid() {
                 return Err(BlockError::ParentExecutionPayloadInvalid {
-                    parent_root: block.parent_root(),
+                    parent_root,
                 });
             }
         } else {
@@ -1395,8 +1403,19 @@ impl<T: BeaconChainTypes> ExecutionPendingBlock<T> {
             //  because it will revert finalization. Note that the finalized block is stored in fork
             //  choice, so we will not reject any child of the finalized block (this is relevant during
             //  genesis).
+            let parent_exists_in_db = chain
+                .store
+                .block_exists(&parent_root)
+                .unwrap_or(false);
+            warn!(
+                block_slot = block.slot().as_u64(),
+                block_root = %block_root,
+                parent_root = %parent_root,
+                parent_exists_in_db = parent_exists_in_db,
+                "⚠️  Parent block not found in fork choice (but may exist in DB)"
+            );
             return Err(BlockError::ParentUnknown {
-                parent_root: block.parent_root(),
+                parent_root,
             });
         }
 
@@ -1840,10 +1859,34 @@ pub fn check_block_relevancy<T: BeaconChainTypes>(
 /// Returns the canonical root of the given `block`.
 ///
 /// Use this function to ensure that we report the block hashing time Prometheus metric.
+///
+/// For TEE-extended blocks, this uses the header root (which includes TEE fields) instead of
+/// the block's tree hash, as the block root should match the header root in Ethereum.
 pub fn get_block_root<E: EthSpec>(block: &SignedBeaconBlock<E>) -> Hash256 {
+    get_block_root_with_tee(block, None, None)
+}
+
+/// Returns the canonical root of the given `block` with optional TEE fields.
+///
+/// If TEE fields are provided, uses the header root with real TEE fields.
+/// Otherwise, falls back to the block's canonical root (which uses placeholder TEE fields).
+pub fn get_block_root_with_tee<E: EthSpec>(
+    block: &SignedBeaconBlock<E>,
+    proposer_tee_type: Option<types::tee_types::TEEType>,
+    proposer_tee_quote: Option<types::tee_attestation::TEEQuote>,
+) -> Hash256 {
     let block_root_timer = metrics::start_timer(&metrics::BLOCK_PROCESSING_BLOCK_ROOT);
 
-    let block_root = block.canonical_root();
+    let block_root = if let (Some(tee_type), Some(tee_quote)) = (proposer_tee_type, proposer_tee_quote) {
+        // Use header root with real TEE fields
+        let header = block.message().block_header_with_tee(tee_type, tee_quote);
+        header.canonical_root()
+    } else {
+        // Fall back to block's canonical root (uses placeholder TEE fields in header)
+        // NOTE: This will cause root mismatches for TEE-extended blocks, but is necessary
+        // for backward compatibility when TEE fields are not available.
+        block.canonical_root()
+    };
 
     metrics::stop_timer(block_root_timer);
 

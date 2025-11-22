@@ -321,9 +321,17 @@ impl<E: EthSpec, Payload: AbstractExecPayload<E>> SignedBeaconBlock<E, Payload> 
         self.message().state_root()
     }
 
-    /// Returns the `tree_hash_root` of the block.
+    /// Returns the canonical root of the block.
+    ///
+    /// In Ethereum, the block root IS the header root. This method returns the header root
+    /// (which includes TEE fields for TEE-extended blocks) rather than the block's tree hash.
+    ///
+    /// NOTE: For locally produced blocks, ensure the header has real TEE fields by updating
+    /// the state's `latest_block_header` before calculating the root.
     pub fn canonical_root(&self) -> Hash256 {
-        self.message().tree_hash_root()
+        // Return the header root, which includes TEE fields for TEE-extended blocks
+        // This ensures consistency: block root == header root
+        self.message().canonical_root()
     }
 
     pub fn num_expected_blobs(&self) -> usize {

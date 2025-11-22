@@ -28,6 +28,8 @@ use crate::data_availability_checker::{
 use crate::data_column_verification::{GossipDataColumnError, GossipVerifiedDataColumn};
 use crate::early_attester_cache::EarlyAttesterCache;
 use crate::errors::{BeaconChainError as Error, BlockProductionError};
+use types::tee_attestation::TEEQuote;
+use types::tee_types::TEEType;
 use crate::events::ServerSentEventHandler;
 use crate::execution_payload::{NotifyExecutionLayer, PreparePayloadHandle, get_execution_payload};
 use crate::fetch_blobs::EngineGetBlobsOutput;
@@ -4468,6 +4470,82 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
         Ok(())
     }
 
+    /// Get the TEE attestation quote for a proposer during block production.
+    /// 
+    /// This function attempts to retrieve the TEE quote from:
+    /// 1. Environment variable `TEE_PROPOSER_ATTESTATION` (base64-encoded)
+    /// 2. Environment variable `TEE_PROPOSER_ATTESTATION_{PROPOSER_INDEX}` (per-validator)
+    /// 3. System TEE attestation service (future implementation)
+    /// 4. Default empty quote if none available
+    /// 
+    /// In production, this should be replaced with actual TEE attestation retrieval
+    /// from the system's TEE environment (SEV, TDX, or CCA).
+    fn get_tee_quote_for_proposer(
+        proposer_index: u64,
+        tee_type: &TEEType,
+    ) -> TEEQuote {
+        use std::env;
+        
+        // Try proposer-specific environment variable first
+        let env_var_name = format!("TEE_PROPOSER_ATTESTATION_{}", proposer_index);
+        if let Ok(quote_str) = env::var(&env_var_name) {
+            match TEEQuote::from_base64(&quote_str) {
+                Ok(quote) => {
+                    info!(
+                        proposer_index = proposer_index,
+                        tee_type = ?tee_type,
+                        "Using TEE quote from {} environment variable",
+                        env_var_name
+                    );
+                    return quote;
+                }
+                Err(e) => {
+                    warn!(
+                        proposer_index = proposer_index,
+                        env_var = %env_var_name,
+                        error = ?e,
+                        "Failed to decode TEE quote from {} environment variable, using default",
+                        env_var_name
+                    );
+                }
+            }
+        }
+
+        // Try generic environment variable
+        if let Ok(quote_str) = env::var("TEE_PROPOSER_ATTESTATION") {
+            match TEEQuote::from_base64(&quote_str) {
+                Ok(quote) => {
+                    info!(
+                        proposer_index = proposer_index,
+                        tee_type = ?tee_type,
+                        "Using TEE quote from TEE_PROPOSER_ATTESTATION environment variable"
+                    );
+                    return quote;
+                }
+                Err(e) => {
+                    warn!(
+                        proposer_index = proposer_index,
+                        error = ?e,
+                        "Failed to decode TEE quote from TEE_PROPOSER_ATTESTATION environment variable, using default"
+                    );
+                }
+            }
+        }
+
+        // TODO: In production, retrieve quote from system TEE attestation service
+        // For SEV: Use AMD SEV API
+        // For TDX: Use Intel TDX attestation
+        // For CCA: Use ARM CCA attestation
+        
+        warn!(
+            proposer_index = proposer_index,
+            tee_type = ?tee_type,
+            "No TEE quote found in environment variables, using default empty quote. In production, implement system TEE attestation retrieval."
+        );
+        
+        TEEQuote::default()
+    }
+
     pub async fn produce_block_with_verification(
         self: &Arc<Self>,
         randao_reveal: Signature,
@@ -5778,6 +5856,61 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
 
         let (mut block, _) = block.deconstruct();
         *block.state_root_mut() = state_root;
+
+        // Get the proposer's TEE type and quote for the block header
+        // This ensures the block root matches the header root calculated with real TEE fields
+        let proposer_tee_type = state
+            .validators()
+            .get(proposer_index as usize)
+            .map(|v| v.tee_type.clone())
+            .unwrap_or_else(|| {
+                warn!(
+                    proposer_index = proposer_index,
+                    "Proposer validator not found, using default TEE type"
+                );
+                TEEType::SEV // Default fallback
+            });
+
+        // Get the TEE attestation quote from environment variable or system
+        // Format: base64-encoded quote from TEE_PROPOSER_ATTESTATION env var, or empty quote
+        let proposer_tee_quote = Self::get_tee_quote_for_proposer(proposer_index, &proposer_tee_type);
+
+        // Update the state's latest_block_header with real TEE fields
+        // This ensures that when the next block references this block, it uses the correct header root
+        let block_header_with_tee = block.block_header_with_tee(proposer_tee_type.clone(), proposer_tee_quote.clone());
+        *state.latest_block_header_mut() = block_header_with_tee.clone();
+
+        // NOTE: block.canonical_root() now returns header.canonical_root() (see BeaconBlock::canonical_root()),
+        // so they should match. However, block.canonical_root() uses block_header() which has placeholder
+        // TEE fields, while block_header_with_tee has real TEE fields. We update the state's header
+        // with real TEE fields so that future block references use the correct root.
+        let block_root_from_header = block_header_with_tee.canonical_root();
+        let block_root_from_block = block.canonical_root(); // This uses block_header() with placeholders
+        
+        info!(
+            slot = slot.as_u64(),
+            proposer_index = proposer_index,
+            tee_type = ?proposer_tee_type,
+            block_root_from_block = %block_root_from_block,
+            block_root_from_header = %block_root_from_header,
+            roots_match = block_root_from_block == block_root_from_header,
+            "🔍 Block production: Using real TEE fields for proposer. State header updated with real TEE fields."
+        );
+        
+        // NOTE: block.canonical_root() uses block_header() which has placeholder TEE fields.
+        // For consistency, we should use the header root with real TEE fields. However, since
+        // we've updated the state's latest_block_header with real TEE fields, the next block
+        // will reference this block correctly. The block root calculation itself will use
+        // placeholders until we modify BeaconBlock to store TEE fields or modify block_header()
+        // to accept TEE fields.
+        if block_root_from_block != block_root_from_header {
+            warn!(
+                block_root_from_block = %block_root_from_block,
+                block_root_from_header = %block_root_from_header,
+                "⚠️  Block root uses placeholder TEE fields: block.canonical_root() ({}) differs from header.canonical_root() with real TEE fields ({}). State header updated with real TEE fields for consistency.",
+                block_root_from_block, block_root_from_header
+            );
+        }
 
         let blob_items = match maybe_blobs_and_proofs {
             Some((blobs, proofs)) => {

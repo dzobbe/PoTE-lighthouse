@@ -1,0 +1,75 @@
+[
+  {
+    "name": "baseline",
+    "description": "Baseline configuration with standard parameters",
+    "params": {
+      "seconds_per_slot": 12,
+      "validator_count": 5
+    }
+  },
+  {
+    "name": "fast_slots_6s",
+    "description": "Fast slot time - 6 seconds per slot",
+    "params": {
+      "seconds_per_slot": 6,
+      "validator_count": 5
+    }
+  },
+  {
+    "name": "fast_slots_8s",
+    "description": "Moderately fast slot time - 8 seconds per slot",
+    "params": {
+      "seconds_per_slot": 8,
+      "validator_count": 5
+    }
+  },
+  {
+    "name": "slow_slots_24s",
+    "description": "Slow slot time - 24 seconds per slot",
+    "params": {
+      "seconds_per_slot": 24,
+      "validator_count": 5
+    }
+  },
+  {
+    "name": "slow_slots_30s",
+    "description": "Very slow slot time - 30 seconds per slot",
+    "params": {
+      "seconds_per_slot": 30,
+      "validator_count": 5
+    }
+  },
+  {
+    "name": "few_validators",
+    "description": "Few validators per node - 3 validators",
+    "params": {
+      "seconds_per_slot": 12,
+      "validator_count": 3
+    }
+  },
+  {
+    "name": "many_validators",
+    "description": "Many validators per node - 10 validators",
+    "params": {
+      "seconds_per_slot": 12,
+      "validator_count": 10
+    }
+  },
+  {
+    "name": "very_many_validators",
+    "description": "Very many validators per node - 20 validators",
+    "params": {
+      "seconds_per_slot": 12,
+      "validator_count": 20
+    }
+  },
+  {
+    "name": "fast_slots_many_validators",
+    "description": "Fast slots with many validators - stress test",
+    "params": {
+      "seconds_per_slot": 6,
+      "validator_count": 10
+    }
+  }
+]
+

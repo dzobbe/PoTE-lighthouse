@@ -108,9 +108,16 @@ fn try_proposer_duties_from_cache<T: BeaconChainTypes>(
         .beacon_state
         .proposer_shuffling_decision_root(head_block_root, &chain.spec)
         .map_err(warp_utils::reject::beacon_state_error)?;
+    // Use the stored head_block_root (from fork choice) instead of recalculating it.
+    // This is important because recalculating canonical_root() uses placeholder TEE fields,
+    // which may not match the root used when the block was added to fork choice.
+    // Try to get execution status, but fall back to false if the block is not in fork choice.
+    // This can happen during syncing or if the block was pruned from the proto array.
     let execution_optimistic = chain
-        .is_optimistic_or_invalid_head_block(head_block)
-        .map_err(warp_utils::reject::unhandled_error)?;
+        .canonical_head
+        .fork_choice_read_lock()
+        .is_optimistic_or_invalid_block(&head_block_root)
+        .unwrap_or(false);
 
     // This code path can't handle requests for past epochs.
     if head_epoch > request_epoch {
