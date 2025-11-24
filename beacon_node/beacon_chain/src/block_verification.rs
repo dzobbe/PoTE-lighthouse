@@ -93,11 +93,11 @@ use std::sync::Arc;
 use store::{Error as DBError, KeyValueStore};
 use strum::AsRefStr;
 use task_executor::JoinHandle;
-use tracing::{Instrument, Span, debug, debug_span, error, info_span, instrument, warn};
+use tracing::{Instrument, Span, debug, debug_span, error, info, info_span, instrument, warn};
 use types::{
     BeaconBlockRef, BeaconState, BeaconStateError, BlobsList, ChainSpec, DataColumnSidecarList,
-    Epoch, EthSpec, ExecutionBlockHash, FullPayload, Hash256, InconsistentFork, KzgProofs,
-    PublicKey, PublicKeyBytes, RelativeEpoch, SignedBeaconBlock, SignedBeaconBlockHeader, Slot,
+    Domain, Epoch, EthSpec, ExecutionBlockHash, FullPayload, Hash256, InconsistentFork, KzgProofs,
+    PublicKey, PublicKeyBytes, RelativeEpoch, SignedBeaconBlock, SignedBeaconBlockHeader, SignedRoot, Slot,
     data_column_sidecar::DataColumnSidecarError,
 };
 
@@ -983,36 +983,93 @@ impl<T: BeaconChainTypes> GossipVerifiedBlock<T> {
         // the state's latest_block_header has real TEE fields. The signature should be computed
         // and verified using the same TEE fields.
         //
-        // ISSUE: For locally produced blocks, the validator client signs in a separate process,
-        // so thread-local TEE fields don't work. The block is signed with placeholder TEE fields
-        // (via block.block_header()), but the state's latest_block_header has real TEE fields.
-        // This causes signature verification to fail because the block was signed with one root
-        // (placeholder TEE fields) but the state expects a different root (real TEE fields).
-        //
-        // TODO: Fix by passing TEE fields through the HTTP API response metadata so the validator
-        // client can use them when signing blocks. This requires:
-        // 1. Adding TEE fields to ProduceBlockV3Metadata
-        // 2. Modifying the validator client to use TEE fields when computing signing_root
-        // 3. Ensuring blocks are signed with real TEE fields matching the state's latest_block_header
-        let signature_is_valid = {
-            let pubkey_cache = get_validator_pubkey_cache(chain)?;
-            let pubkey = pubkey_cache
+        // The validator client should now receive TEE fields via HTTP API and use them when signing,
+        // so blocks should be signed with real TEE fields matching the state's latest_block_header.
+        let pubkey_cache = get_validator_pubkey_cache(chain)?;
+        let pubkey = pubkey_cache
+            .get(block.message().proposer_index() as usize)
+            .ok_or_else(|| BlockError::UnknownValidator(block.message().proposer_index()))?;
+        
+        // Log block header TEE fields for debugging
+        let block_header = block.message().block_header();
+        let block_header_tee_type = block_header.proposer_tee_type.clone();
+        let block_header_tee_quote_len = block_header.proposer_tee_quote.as_bytes().len();
+        
+        // Check if block header has non-placeholder TEE fields
+        // A real TEE quote should be non-zero (8192 bytes of random data in testing)
+        let has_real_tee_fields = block_header_tee_quote_len > 0 && 
+            block_header.proposer_tee_quote.as_bytes().iter().any(|&b| b != 0);
+        
+        // Get validator's TEE type from the parent state
+        let validator_tee_type = if let Some(parent) = opt_parent.as_ref() {
+            parent.pre_state.validators()
                 .get(block.message().proposer_index() as usize)
-                .ok_or_else(|| BlockError::UnknownValidator(block.message().proposer_index()))?;
-            block.verify_signature(
-                Some(block_root),
-                pubkey,
-                &fork,
-                chain.genesis_validators_root,
-                &chain.spec,
-            )
+                .map(|v| v.tee_type.clone())
+        } else {
+            None
         };
-
+        
+        info!(
+            slot = block.slot().as_u64(),
+            proposer_index = block.message().proposer_index(),
+            block_root = %block_root,
+            block_header_tee_type = ?block_header_tee_type,
+            validator_tee_type = ?validator_tee_type,
+            block_header_tee_quote_len = block_header_tee_quote_len,
+            has_real_tee_fields = has_real_tee_fields,
+            "🔍 Block verification: Verifying proposer signature"
+        );
+        
+        // Compute the signing root that would be used during verification
+        // This uses the embedded TEE fields from the block (since thread-local storage is not set during verification)
+        let domain = chain.spec.get_domain(
+            block.epoch(),
+            Domain::BeaconProposer,
+            &fork,
+            chain.genesis_validators_root,
+        );
+        let verification_signing_root = block.message().signing_root(domain);
+        
+        // Try verification - pass None to let verify_signature compute the signing root itself
+        // This ensures we use the same TEE fields (embedded) for both signing root computation and verification
+        let signature_is_valid = block.verify_signature(
+            None, // Let verify_signature compute the signing root from the block message
+            pubkey,
+            &fork,
+            chain.genesis_validators_root,
+            &chain.spec,
+        );
+        
         if !signature_is_valid {
+            // Log detailed information about what TEE fields were used
+            let block_message = block.message();
+            let embedded_tee_type = block_message.proposer_tee_type();
+            let embedded_tee_quote_len = block_message.proposer_tee_quote().as_bytes().len();
+            
+            warn!(
+                slot = block.slot().as_u64(),
+                proposer_index = block.message().proposer_index(),
+                block_root = %block_root,
+                verification_signing_root = %verification_signing_root,
+                block_header_tee_type = ?block_header_tee_type,
+                embedded_tee_type = ?embedded_tee_type,
+                validator_tee_type = ?validator_tee_type,
+                block_header_tee_quote_len = block_header_tee_quote_len,
+                embedded_tee_quote_len = embedded_tee_quote_len,
+                has_real_tee_fields = has_real_tee_fields,
+                "❌ Block signature verification failed. Block has embedded TEE fields ({:?}), but signature doesn't match. The block may have been signed with different TEE fields than what's embedded.",
+                embedded_tee_type
+            );
+            
             return Err(BlockError::InvalidSignature(
                 InvalidSignature::ProposerSignature,
             ));
         }
+        
+        info!(
+            slot = block.slot().as_u64(),
+            "✅ Block signature verification succeeded"
+        );
 
         chain
             .observed_slashable

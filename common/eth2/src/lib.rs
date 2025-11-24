@@ -45,6 +45,8 @@ pub const CONSENSUS_VERSION_HEADER: &str = "Eth-Consensus-Version";
 pub const EXECUTION_PAYLOAD_BLINDED_HEADER: &str = "Eth-Execution-Payload-Blinded";
 pub const EXECUTION_PAYLOAD_VALUE_HEADER: &str = "Eth-Execution-Payload-Value";
 pub const CONSENSUS_BLOCK_VALUE_HEADER: &str = "Eth-Consensus-Block-Value";
+pub const PROPOSER_TEE_TYPE_HEADER: &str = "Eth-Proposer-TEE-Type";
+pub const PROPOSER_TEE_QUOTE_HEADER: &str = "Eth-Proposer-TEE-Quote";
 
 pub const CONTENT_TYPE_HEADER: &str = "Content-Type";
 pub const SSZ_CONTENT_TYPE_HEADER: &str = "application/octet-stream";
@@ -2304,22 +2306,29 @@ impl BeaconNodeHttpClient {
                 Accept::Json,
                 self.timeouts.get_validator_block,
                 |response, headers| async move {
-                    let header_metadata = ProduceBlockV3Metadata::try_from(&headers)
-                        .map_err(Error::InvalidHeaders)?;
-                    if header_metadata.execution_payload_blinded {
-                        let blinded_response = response
-                            .json::<ForkVersionedResponse<BlindedBeaconBlock<E>,
-                                ProduceBlockV3Metadata>>()
-                            .await?
-                            .map_data(ProduceBlockV3Response::Blinded);
-                        Ok((blinded_response, header_metadata))
+                    // For JSON responses, metadata comes from the JSON body, not headers
+                    // This ensures TEE fields are properly included
+                    let response_bytes = response.bytes().await?;
+                    
+                    // Try to parse as blinded first (check execution_payload_blinded from headers as hint)
+                    let header_metadata_hint = ProduceBlockV3Metadata::try_from(&headers).ok();
+                    let is_blinded = header_metadata_hint
+                        .as_ref()
+                        .map(|m| m.execution_payload_blinded)
+                        .unwrap_or(false);
+                    
+                    if is_blinded {
+                        let blinded_response: ForkVersionedResponse<BlindedBeaconBlock<E>, ProduceBlockV3Metadata> = 
+                            serde_json::from_slice(&response_bytes).map_err(Error::InvalidJson)?;
+                        let metadata = blinded_response.metadata.clone();
+                        let response = blinded_response.map_data(ProduceBlockV3Response::Blinded);
+                        Ok((response, metadata))
                     } else {
-                        let full_block_response= response
-                            .json::<ForkVersionedResponse<FullBlockContents<E>,
-                            ProduceBlockV3Metadata>>()
-                            .await?
-                            .map_data(ProduceBlockV3Response::Full);
-                        Ok((full_block_response, header_metadata))
+                        let full_block_response: ForkVersionedResponse<FullBlockContents<E>, ProduceBlockV3Metadata> = 
+                            serde_json::from_slice(&response_bytes).map_err(Error::InvalidJson)?;
+                        let metadata = full_block_response.metadata.clone();
+                        let response = full_block_response.map_data(ProduceBlockV3Response::Full);
+                        Ok((response, metadata))
                     }
                 },
             )

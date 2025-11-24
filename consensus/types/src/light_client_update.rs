@@ -5,7 +5,8 @@ use crate::light_client_header::LightClientHeaderElectra;
 use crate::{
     ChainSpec, ContextDeserialize, Epoch, ForkName, LightClientHeaderAltair,
     LightClientHeaderCapella, LightClientHeaderDeneb, LightClientHeaderFulu,
-    LightClientHeaderGloas, SignedBlindedBeaconBlock, beacon_state, test_utils::TestRandom,
+    LightClientHeaderGloas, SignedBlindedBeaconBlock, SignedBeaconBlock, payload::BlindedPayload,
+    beacon_state, test_utils::TestRandom,
 };
 use derivative::Derivative;
 use safe_arith::ArithError;
@@ -239,8 +240,7 @@ impl<E: EthSpec> LightClientUpdate<E> {
         finalized_block: Option<&SignedBlindedBeaconBlock<E>>,
         chain_spec: &ChainSpec,
     ) -> Result<Self, Error> {
-        let light_client_update = match attested_block
-            .fork_name(chain_spec)
+        let light_client_update = match SignedBeaconBlock::<E, BlindedPayload<E>>::fork_name(attested_block, chain_spec)
             .map_err(|_| Error::InconsistentFork)?
         {
             ForkName::Base => return Err(Error::AltairForkNotActive),
@@ -249,7 +249,7 @@ impl<E: EthSpec> LightClientUpdate<E> {
                     LightClientHeaderAltair::block_to_light_client_header(attested_block)?;
 
                 let finalized_header = if let Some(finalized_block) = finalized_block {
-                    if finalized_block.fork_name_unchecked() == fork_name {
+                    if SignedBeaconBlock::<E, BlindedPayload<E>>::fork_name_unchecked(finalized_block) == fork_name {
                         LightClientHeaderAltair::block_to_light_client_header(finalized_block)?
                     } else {
                         LightClientHeaderAltair::default()
@@ -273,7 +273,7 @@ impl<E: EthSpec> LightClientUpdate<E> {
                     LightClientHeaderCapella::block_to_light_client_header(attested_block)?;
 
                 let finalized_header = if let Some(finalized_block) = finalized_block {
-                    if finalized_block.fork_name_unchecked() == fork_name {
+                    if SignedBeaconBlock::<E, BlindedPayload<E>>::fork_name_unchecked(finalized_block) == fork_name {
                         LightClientHeaderCapella::block_to_light_client_header(finalized_block)?
                     } else {
                         LightClientHeaderCapella::default()
@@ -297,7 +297,7 @@ impl<E: EthSpec> LightClientUpdate<E> {
                     LightClientHeaderDeneb::block_to_light_client_header(attested_block)?;
 
                 let finalized_header = if let Some(finalized_block) = finalized_block {
-                    if finalized_block.fork_name_unchecked() == fork_name {
+                    if SignedBeaconBlock::<E, BlindedPayload<E>>::fork_name_unchecked(finalized_block) == fork_name {
                         LightClientHeaderDeneb::block_to_light_client_header(finalized_block)?
                     } else {
                         LightClientHeaderDeneb::default()
@@ -321,7 +321,7 @@ impl<E: EthSpec> LightClientUpdate<E> {
                     LightClientHeaderElectra::block_to_light_client_header(attested_block)?;
 
                 let finalized_header = if let Some(finalized_block) = finalized_block {
-                    if finalized_block.fork_name_unchecked() == fork_name {
+                    if SignedBeaconBlock::<E, BlindedPayload<E>>::fork_name_unchecked(finalized_block) == fork_name {
                         LightClientHeaderElectra::block_to_light_client_header(finalized_block)?
                     } else {
                         LightClientHeaderElectra::default()
@@ -345,7 +345,7 @@ impl<E: EthSpec> LightClientUpdate<E> {
                     LightClientHeaderFulu::block_to_light_client_header(attested_block)?;
 
                 let finalized_header = if let Some(finalized_block) = finalized_block {
-                    if finalized_block.fork_name_unchecked() == fork_name {
+                    if SignedBeaconBlock::<E, BlindedPayload<E>>::fork_name_unchecked(finalized_block) == fork_name {
                         LightClientHeaderFulu::block_to_light_client_header(finalized_block)?
                     } else {
                         LightClientHeaderFulu::default()
@@ -369,7 +369,7 @@ impl<E: EthSpec> LightClientUpdate<E> {
                     LightClientHeaderGloas::block_to_light_client_header(attested_block)?;
 
                 let finalized_header = if let Some(finalized_block) = finalized_block {
-                    if finalized_block.fork_name_unchecked() == fork_name {
+                    if SignedBeaconBlock::<E, BlindedPayload<E>>::fork_name_unchecked(finalized_block) == fork_name {
                         LightClientHeaderGloas::block_to_light_client_header(finalized_block)?
                     } else {
                         LightClientHeaderGloas::default()

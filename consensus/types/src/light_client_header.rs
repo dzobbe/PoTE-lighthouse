@@ -6,7 +6,7 @@ use crate::{ContextDeserialize, ForkName};
 use crate::{
     EthSpec, ExecutionPayloadHeaderCapella, ExecutionPayloadHeaderDeneb,
     ExecutionPayloadHeaderElectra, ExecutionPayloadHeaderFulu, ExecutionPayloadHeaderGloas,
-    FixedVector, Hash256, SignedBlindedBeaconBlock, test_utils::TestRandom,
+    FixedVector, Hash256, SignedBlindedBeaconBlock, SignedBeaconBlock, test_utils::TestRandom,
 };
 use derivative::Derivative;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -86,8 +86,7 @@ impl<E: EthSpec> LightClientHeader<E> {
         block: &SignedBlindedBeaconBlock<E>,
         chain_spec: &ChainSpec,
     ) -> Result<Self, Error> {
-        let header = match block
-            .fork_name(chain_spec)
+        let header = match SignedBeaconBlock::<E, crate::BlindedPayload<E>>::fork_name(block, chain_spec)
             .map_err(|_| Error::InconsistentFork)?
         {
             ForkName::Base => return Err(Error::AltairForkNotActive),

@@ -327,12 +327,14 @@ impl<S: ValidatorStore + 'static, T: SlotClock + 'static> BlockService<S, T> {
         graffiti: Option<Graffiti>,
         validator_pubkey: &PublicKeyBytes,
         unsigned_block: UnsignedBlock<S::E>,
+        proposer_tee_type: Option<types::tee_types::TEEType>,
+        proposer_tee_quote: Option<types::tee_attestation::TEEQuote>,
     ) -> Result<(), BlockError> {
         let signing_timer = validator_metrics::start_timer(&validator_metrics::BLOCK_SIGNING_TIMES);
 
         let res = self
             .validator_store
-            .sign_block(*validator_pubkey, unsigned_block, slot)
+            .sign_block(*validator_pubkey, unsigned_block, slot, proposer_tee_type, proposer_tee_quote)
             .await;
 
         let signed_block = match res {
@@ -470,6 +472,8 @@ impl<S: ValidatorStore + 'static, T: SlotClock + 'static> BlockService<S, T> {
             })
             .await?;
 
+        let (unsigned_block, proposer_tee_type, proposer_tee_quote) = unsigned_block;
+
         self_ref
             .sign_and_publish_block(
                 proposer_fallback,
@@ -477,6 +481,8 @@ impl<S: ValidatorStore + 'static, T: SlotClock + 'static> BlockService<S, T> {
                 graffiti,
                 &validator_pubkey,
                 unsigned_block,
+                proposer_tee_type,
+                proposer_tee_quote,
             )
             .await?;
 
@@ -525,8 +531,8 @@ impl<S: ValidatorStore + 'static, T: SlotClock + 'static> BlockService<S, T> {
         graffiti: Option<Graffiti>,
         proposer_index: Option<u64>,
         builder_boost_factor: Option<u64>,
-    ) -> Result<UnsignedBlock<S::E>, BlockError> {
-        let block_response = match beacon_node
+    ) -> Result<(UnsignedBlock<S::E>, Option<types::tee_types::TEEType>, Option<types::tee_attestation::TEEQuote>), BlockError> {
+        let (block_response, metadata) = match beacon_node
             .get_validator_blocks_v3_ssz::<S::E>(
                 slot,
                 randao_reveal_ref,
@@ -535,7 +541,7 @@ impl<S: ValidatorStore + 'static, T: SlotClock + 'static> BlockService<S, T> {
             )
             .await
         {
-            Ok((ssz_block_response, _)) => ssz_block_response,
+            Ok((ssz_block_response, ssz_metadata)) => (ssz_block_response, ssz_metadata),
             Err(e) => {
                 warn!(
                     slot = slot.as_u64(),
@@ -543,7 +549,7 @@ impl<S: ValidatorStore + 'static, T: SlotClock + 'static> BlockService<S, T> {
                     "Beacon node does not support SSZ in block production, falling back to JSON"
                 );
 
-                let (json_block_response, _) = beacon_node
+                let (json_block_response, json_metadata) = beacon_node
                     .get_validator_blocks_v3::<S::E>(
                         slot,
                         randao_reveal_ref,
@@ -559,15 +565,75 @@ impl<S: ValidatorStore + 'static, T: SlotClock + 'static> BlockService<S, T> {
                     })?;
 
                 // Extract ProduceBlockV3Response (data field of the struct ForkVersionedResponse)
-                json_block_response.data
+                (json_block_response.data, json_metadata)
             }
         };
 
+        // Extract TEE fields from metadata
+        let proposer_tee_type = metadata.proposer_tee_type;
+        let proposer_tee_quote = metadata.proposer_tee_quote.and_then(|quote_str| {
+            types::tee_attestation::TEEQuote::from_base64(&quote_str).ok()
+        });
+        
         let (block_proposer, unsigned_block) = match block_response {
             eth2::types::ProduceBlockV3Response::Full(block) => {
+                // Check embedded TEE fields in the block
+                let embedded_tee_type = block.block().proposer_tee_type();
+                let embedded_tee_quote_len = block.block().proposer_tee_quote().as_bytes().len();
+                
+                info!(
+                    slot = slot.as_u64(),
+                    proposer_index = proposer_index,
+                    metadata_tee_type = ?proposer_tee_type,
+                    embedded_tee_type = ?embedded_tee_type,
+                    metadata_tee_quote_present = proposer_tee_quote.is_some(),
+                    embedded_tee_quote_len = embedded_tee_quote_len,
+                    "🔍 Validator client: Extracted TEE fields from metadata and block"
+                );
+                
+                // Warn if embedded TEE fields don't match metadata
+                if let Some(metadata_tee_type) = proposer_tee_type.as_ref() {
+                    if *metadata_tee_type != *embedded_tee_type {
+                        warn!(
+                            slot = slot.as_u64(),
+                            metadata_tee_type = ?metadata_tee_type,
+                            embedded_tee_type = ?embedded_tee_type,
+                            "⚠️  Validator client: Block embedded TEE type ({:?}) doesn't match metadata TEE type ({:?}). Will use metadata TEE fields for signing.",
+                            embedded_tee_type, metadata_tee_type
+                        );
+                    }
+                }
+                
                 (block.block().proposer_index(), UnsignedBlock::Full(block))
             }
             eth2::types::ProduceBlockV3Response::Blinded(block) => {
+                // Check embedded TEE fields in the block
+                let embedded_tee_type = block.proposer_tee_type();
+                let embedded_tee_quote_len = block.proposer_tee_quote().as_bytes().len();
+                
+                info!(
+                    slot = slot.as_u64(),
+                    proposer_index = proposer_index,
+                    metadata_tee_type = ?proposer_tee_type,
+                    embedded_tee_type = ?embedded_tee_type,
+                    metadata_tee_quote_present = proposer_tee_quote.is_some(),
+                    embedded_tee_quote_len = embedded_tee_quote_len,
+                    "🔍 Validator client: Extracted TEE fields from metadata and block"
+                );
+                
+                // Warn if embedded TEE fields don't match metadata
+                if let Some(metadata_tee_type) = proposer_tee_type.as_ref() {
+                    if *metadata_tee_type != *embedded_tee_type {
+                        warn!(
+                            slot = slot.as_u64(),
+                            metadata_tee_type = ?metadata_tee_type,
+                            embedded_tee_type = ?embedded_tee_type,
+                            "⚠️  Validator client: Block embedded TEE type ({:?}) doesn't match metadata TEE type ({:?}). Will use metadata TEE fields for signing.",
+                            embedded_tee_type, metadata_tee_type
+                        );
+                    }
+                }
+                
                 (block.proposer_index(), UnsignedBlock::Blinded(block))
             }
         };
@@ -579,7 +645,7 @@ impl<S: ValidatorStore + 'static, T: SlotClock + 'static> BlockService<S, T> {
             ));
         }
 
-        Ok::<_, BlockError>(unsigned_block)
+        Ok::<_, BlockError>((unsigned_block, proposer_tee_type, proposer_tee_quote))
     }
 }
 

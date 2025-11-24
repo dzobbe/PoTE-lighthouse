@@ -4,7 +4,7 @@ use crate::test_utils::TestRandom;
 use crate::{
     ChainSpec, LightClientHeaderAltair, LightClientHeaderCapella, LightClientHeaderDeneb,
     LightClientHeaderElectra, LightClientHeaderFulu, LightClientHeaderGloas,
-    SignedBlindedBeaconBlock, light_client_update::*,
+    SignedBlindedBeaconBlock, SignedBeaconBlock, payload::BlindedPayload, light_client_update::*,
 };
 use derivative::Derivative;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -80,8 +80,7 @@ impl<E: EthSpec> LightClientOptimisticUpdate<E> {
         signature_slot: Slot,
         chain_spec: &ChainSpec,
     ) -> Result<Self, Error> {
-        let optimistic_update = match attested_block
-            .fork_name(chain_spec)
+        let optimistic_update = match SignedBeaconBlock::<E, BlindedPayload<E>>::fork_name(attested_block, chain_spec)
             .map_err(|_| Error::InconsistentFork)?
         {
             ForkName::Altair | ForkName::Bellatrix => {

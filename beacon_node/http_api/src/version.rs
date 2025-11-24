@@ -1,7 +1,8 @@
 use crate::api_types::EndpointVersion;
 use eth2::{
     CONSENSUS_BLOCK_VALUE_HEADER, CONSENSUS_VERSION_HEADER, CONTENT_TYPE_HEADER,
-    EXECUTION_PAYLOAD_BLINDED_HEADER, EXECUTION_PAYLOAD_VALUE_HEADER, SSZ_CONTENT_TYPE_HEADER,
+    EXECUTION_PAYLOAD_BLINDED_HEADER, EXECUTION_PAYLOAD_VALUE_HEADER, PROPOSER_TEE_QUOTE_HEADER,
+    PROPOSER_TEE_TYPE_HEADER, SSZ_CONTENT_TYPE_HEADER,
 };
 use serde::Serialize;
 use types::{
@@ -112,6 +113,32 @@ pub fn add_consensus_block_value_header<T: Reply>(
         reply,
         CONSENSUS_BLOCK_VALUE_HEADER,
         consensus_payload_value.to_string(),
+    )
+    .into_response()
+}
+
+/// Add the `Eth-Proposer-TEE-Type` header to a response.
+pub fn add_proposer_tee_type_header<T: Reply>(
+    reply: T,
+    proposer_tee_type: types::tee_types::TEEType,
+) -> Response {
+    reply::with_header(
+        reply,
+        PROPOSER_TEE_TYPE_HEADER,
+        proposer_tee_type.as_str(),
+    )
+    .into_response()
+}
+
+/// Add the `Eth-Proposer-TEE-Quote` header to a response.
+pub fn add_proposer_tee_quote_header<T: Reply>(
+    reply: T,
+    proposer_tee_quote: &types::tee_attestation::TEEQuote,
+) -> Response {
+    reply::with_header(
+        reply,
+        PROPOSER_TEE_QUOTE_HEADER,
+        proposer_tee_quote.to_base64(),
     )
     .into_response()
 }

@@ -15,7 +15,7 @@ use std::marker::PhantomData;
 use std::path::Path;
 use std::sync::Arc;
 use task_executor::TaskExecutor;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use types::{
     AbstractExecPayload, Address, AggregateAndProof, Attestation, BeaconBlock, BlindedPayload,
     ChainSpec, ContributionAndProof, Domain, Epoch, EthSpec, Fork, Graffiti, Hash256,
@@ -441,6 +441,8 @@ impl<T: SlotClock + 'static, E: EthSpec> LighthouseValidatorStore<T, E> {
         validator_pubkey: PublicKeyBytes,
         block: BeaconBlock<E, Payload>,
         current_slot: Slot,
+        proposer_tee_type: Option<types::tee_types::TEEType>,
+        proposer_tee_quote: Option<types::tee_attestation::TEEQuote>,
     ) -> Result<SignedBeaconBlock<E, Payload>, Error> {
         // Make sure the block slot is not higher than the current slot to avoid potential attacks.
         if block.slot() > current_slot {
@@ -455,6 +457,58 @@ impl<T: SlotClock + 'static, E: EthSpec> LighthouseValidatorStore<T, E> {
             });
         }
 
+        // Check embedded TEE fields in the block
+        let embedded_tee_type = block.proposer_tee_type();
+        let embedded_tee_quote = block.proposer_tee_quote();
+        
+        // Only set thread-local storage if metadata TEE fields are provided AND different from embedded fields
+        // If they match, we can use the embedded fields directly (no thread-local storage needed)
+        // This ensures the block structure and signing use the same TEE fields
+        if let (Some(metadata_tee_type), Some(metadata_tee_quote)) = (proposer_tee_type.as_ref(), proposer_tee_quote.as_ref()) {
+            // Check if embedded TEE fields match metadata TEE fields
+            let tee_fields_match = *metadata_tee_type == *embedded_tee_type && 
+                                   metadata_tee_quote.as_bytes() == embedded_tee_quote.as_bytes();
+            
+            if tee_fields_match {
+                info!(
+                    slot = block.slot().as_u64(),
+                    proposer_index = block.proposer_index(),
+                    tee_type = ?metadata_tee_type,
+                    "✅ Validator client: Embedded TEE fields match metadata. Will sign with embedded TEE fields (no thread-local override needed)."
+                );
+                // Don't set thread-local storage - use embedded fields directly
+            } else {
+                warn!(
+                    slot = block.slot().as_u64(),
+                    proposer_index = block.proposer_index(),
+                    embedded_tee_type = ?embedded_tee_type,
+                    metadata_tee_type = ?metadata_tee_type,
+                    embedded_tee_quote_len = embedded_tee_quote.as_bytes().len(),
+                    metadata_tee_quote_len = metadata_tee_quote.as_bytes().len(),
+                    "⚠️  Validator client: Embedded TEE fields don't match metadata. Will override with metadata TEE fields for signing (this should not happen in normal operation)."
+                );
+                // Set thread-local storage to override embedded fields
+                types::beacon_block::set_block_tee_fields(metadata_tee_type.clone(), metadata_tee_quote.clone());
+                
+                // Verify TEE fields are set
+                let tee_fields_check = types::beacon_block::get_block_tee_fields_debug();
+                debug!(
+                    slot = block.slot().as_u64(),
+                    tee_fields_set = tee_fields_check.is_some(),
+                    "TEE fields check after setting in thread-local storage"
+                );
+            }
+        } else {
+            info!(
+                slot = block.slot().as_u64(),
+                proposer_index = block.proposer_index(),
+                embedded_tee_type = ?embedded_tee_type,
+                "✅ Validator client: No TEE fields provided in metadata, will sign with embedded TEE fields ({:?})",
+                embedded_tee_type
+            );
+            // Don't set thread-local storage - use embedded fields directly
+        }
+
         let signing_epoch = block.epoch();
         let signing_context = self.signing_context(Domain::BeaconProposer, signing_epoch);
         let domain_hash = signing_context.domain_hash(&self.spec);
@@ -462,12 +516,20 @@ impl<T: SlotClock + 'static, E: EthSpec> LighthouseValidatorStore<T, E> {
         let signing_method = self.doppelganger_checked_signing_method(validator_pubkey)?;
 
         // Check for slashing conditions.
+        // Use block header with TEE fields if available for slashing protection check
+        // Clone TEE fields since we'll need them later for logging
+        let block_header_for_slashing = if let (Some(tee_type), Some(tee_quote)) = (proposer_tee_type.as_ref(), proposer_tee_quote.as_ref()) {
+            block.block_header_with_tee(tee_type.clone(), tee_quote.clone())
+        } else {
+            block.block_header()
+        };
+        
         let slashing_status = if signing_method
             .requires_local_slashing_protection(self.enable_web3signer_slashing_protection)
         {
             self.slashing_protection.check_and_insert_block_proposal(
                 &validator_pubkey,
-                &block.block_header(),
+                &block_header_for_slashing,
                 domain_hash,
             )
         } else {
@@ -482,6 +544,48 @@ impl<T: SlotClock + 'static, E: EthSpec> LighthouseValidatorStore<T, E> {
                     &[validator_metrics::SUCCESS],
                 );
 
+                // Compute signing root to log what we're signing
+                // Note: signing_root uses canonical_root() which should use TEE fields from thread-local storage
+                let signing_root = block.signing_root(domain_hash);
+                let block_root = block.canonical_root();
+                
+                // Check what TEE fields are in the actual block header
+                let block_header = block.block_header();
+                let block_header_root = block_header.canonical_root();
+                
+                // If TEE fields are available, compute what the header root should be
+                let expected_header_root = if let (Some(tee_type), Some(tee_quote)) = (proposer_tee_type.as_ref(), proposer_tee_quote.as_ref()) {
+                    let header_with_tee = block.block_header_with_tee(tee_type.clone(), tee_quote.clone());
+                    Some(header_with_tee.canonical_root())
+                } else {
+                    None
+                };
+                
+                info!(
+                    slot = block.slot().as_u64(),
+                    proposer_index = block.proposer_index(),
+                    signing_root = %signing_root,
+                    block_root = %block_root,
+                    block_header_root = %block_header_root,
+                    expected_header_root = ?expected_header_root,
+                    domain_hash = %domain_hash,
+                    block_header_tee_type = ?block_header.proposer_tee_type,
+                    block_header_tee_quote_len = block_header.proposer_tee_quote.as_bytes().len(),
+                    "🔍 Validator client: Computing signature for block"
+                );
+                
+                // Warn if there's a mismatch
+                if let Some(expected) = expected_header_root {
+                    if expected != block_header_root {
+                        warn!(
+                            slot = block.slot().as_u64(),
+                            block_header_root = %block_header_root,
+                            expected_header_root = %expected,
+                            "⚠️  Validator client: Block header has placeholder TEE fields, but signing with real TEE fields"
+                        );
+                    }
+                }
+                
                 let signature = signing_method
                     .get_signature(
                         SignableMessage::BeaconBlock(&block),
@@ -490,6 +594,15 @@ impl<T: SlotClock + 'static, E: EthSpec> LighthouseValidatorStore<T, E> {
                         &self.task_executor,
                     )
                     .await?;
+                
+                // Clear TEE fields from thread-local storage after signing
+                types::beacon_block::clear_block_tee_fields();
+                
+                info!(
+                    slot = block.slot().as_u64(),
+                    "✅ Validator client: Block signed successfully"
+                );
+                
                 Ok(SignedBeaconBlock::from_block(block, signature))
             }
             Ok(Safe::SameData) => {
@@ -728,18 +841,20 @@ impl<T: SlotClock + 'static, E: EthSpec> ValidatorStore for LighthouseValidatorS
         validator_pubkey: PublicKeyBytes,
         block: UnsignedBlock<E>,
         current_slot: Slot,
+        proposer_tee_type: Option<types::tee_types::TEEType>,
+        proposer_tee_quote: Option<types::tee_attestation::TEEQuote>,
     ) -> Result<SignedBlock<E>, Error> {
         match block {
             UnsignedBlock::Full(block) => {
                 let (block, blobs) = block.deconstruct();
-                self.sign_abstract_block(validator_pubkey, block, current_slot)
+                self.sign_abstract_block(validator_pubkey, block, current_slot, proposer_tee_type, proposer_tee_quote)
                     .await
                     .map(|block| {
                         SignedBlock::Full(PublishBlockRequest::new(Arc::new(block), blobs))
                     })
             }
             UnsignedBlock::Blinded(block) => self
-                .sign_abstract_block(validator_pubkey, block, current_slot)
+                .sign_abstract_block(validator_pubkey, block, current_slot, proposer_tee_type, proposer_tee_quote)
                 .await
                 .map(|block| SignedBlock::Blinded(Arc::new(block))),
         }

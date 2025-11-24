@@ -331,6 +331,8 @@ struct PartialBeaconBlock<E: EthSpec> {
     sync_aggregate: Option<SyncAggregate<E>>,
     prepare_payload_handle: Option<PreparePayloadHandle<E>>,
     bls_to_execution_changes: Vec<SignedBlsToExecutionChange>,
+    proposer_tee_type: types::tee_types::TEEType,
+    proposer_tee_quote: types::tee_attestation::TEEQuote,
 }
 
 pub enum BlockProcessStatus<E: EthSpec> {
@@ -520,6 +522,20 @@ impl<E: EthSpec> BeaconBlockResponseWrapper<E> {
     pub fn is_blinded(&self) -> bool {
         matches!(self, BeaconBlockResponseWrapper::Blinded(_))
     }
+
+    pub fn proposer_tee_type(&self) -> types::tee_types::TEEType {
+        match self {
+            BeaconBlockResponseWrapper::Full(resp) => resp.proposer_tee_type.clone(),
+            BeaconBlockResponseWrapper::Blinded(resp) => resp.proposer_tee_type.clone(),
+        }
+    }
+
+    pub fn proposer_tee_quote(&self) -> types::tee_attestation::TEEQuote {
+        match self {
+            BeaconBlockResponseWrapper::Full(resp) => resp.proposer_tee_quote.clone(),
+            BeaconBlockResponseWrapper::Blinded(resp) => resp.proposer_tee_quote.clone(),
+        }
+    }
 }
 
 /// The components produced when the local beacon node creates a new block to extend the chain
@@ -534,6 +550,10 @@ pub struct BeaconBlockResponse<E: EthSpec, Payload: AbstractExecPayload<E>> {
     pub execution_payload_value: Uint256,
     /// The consensus layer reward to the proposer
     pub consensus_block_value: u64,
+    /// TEE type of the proposer (for block signing)
+    pub proposer_tee_type: types::tee_types::TEEType,
+    /// TEE attestation quote of the proposer (for block signing)
+    pub proposer_tee_quote: types::tee_attestation::TEEQuote,
 }
 
 impl FinalizationAndCanonicity {
@@ -5452,6 +5472,23 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
         }
 
         let slot = state.slot();
+        
+        // Get the proposer's TEE type and quote for the block
+        // This ensures the block has real TEE fields when constructed
+        let proposer_tee_type = state
+            .validators()
+            .get(proposer_index as usize)
+            .map(|v| v.tee_type.clone())
+            .unwrap_or_else(|| {
+                warn!(
+                    proposer_index = proposer_index,
+                    "Proposer validator not found, using default TEE type"
+                );
+                TEEType::SEV // Default fallback
+            });
+
+        // Get the TEE attestation quote from environment variable or system
+        let proposer_tee_quote = Self::get_tee_quote_for_proposer(proposer_index, &proposer_tee_type);
 
         let sync_aggregate = if matches!(&state, BeaconState::Base(_)) {
             None
@@ -5486,6 +5523,8 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
             sync_aggregate,
             prepare_payload_handle,
             bls_to_execution_changes,
+            proposer_tee_type,
+            proposer_tee_quote,
         })
     }
 
@@ -5514,6 +5553,8 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
             // produce said `execution_payload`.
             prepare_payload_handle: _,
             bls_to_execution_changes,
+            proposer_tee_type,
+            proposer_tee_quote,
         } = partial_beacon_block;
 
         let (attester_slashings_base, attester_slashings_electra) =
@@ -5545,6 +5586,8 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
                     proposer_index,
                     parent_root,
                     state_root: Hash256::zero(),
+                    proposer_tee_type: proposer_tee_type.clone(),
+                    proposer_tee_quote: proposer_tee_quote.clone(),
                     body: BeaconBlockBodyBase {
                         randao_reveal,
                         eth1_data,
@@ -5566,6 +5609,8 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
                     proposer_index,
                     parent_root,
                     state_root: Hash256::zero(),
+                    proposer_tee_type: proposer_tee_type.clone(),
+                    proposer_tee_quote: proposer_tee_quote.clone(),
                     body: BeaconBlockBodyAltair {
                         randao_reveal,
                         eth1_data,
@@ -5593,6 +5638,8 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
                         proposer_index,
                         parent_root,
                         state_root: Hash256::zero(),
+                        proposer_tee_type: proposer_tee_type.clone(),
+                        proposer_tee_quote: proposer_tee_quote.clone(),
                         body: BeaconBlockBodyBellatrix {
                             randao_reveal,
                             eth1_data,
@@ -5625,6 +5672,8 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
                         proposer_index,
                         parent_root,
                         state_root: Hash256::zero(),
+                        proposer_tee_type: proposer_tee_type.clone(),
+                        proposer_tee_quote: proposer_tee_quote.clone(),
                         body: BeaconBlockBodyCapella {
                             randao_reveal,
                             eth1_data,
@@ -5664,6 +5713,8 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
                         proposer_index,
                         parent_root,
                         state_root: Hash256::zero(),
+                        proposer_tee_type: proposer_tee_type.clone(),
+                        proposer_tee_quote: proposer_tee_quote.clone(),
                         body: BeaconBlockBodyDeneb {
                             randao_reveal,
                             eth1_data,
@@ -5707,6 +5758,8 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
                         proposer_index,
                         parent_root,
                         state_root: Hash256::zero(),
+                        proposer_tee_type: proposer_tee_type.clone(),
+                        proposer_tee_quote: proposer_tee_quote.clone(),
                         body: BeaconBlockBodyElectra {
                             randao_reveal,
                             eth1_data,
@@ -5749,6 +5802,8 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
                         proposer_index,
                         parent_root,
                         state_root: Hash256::zero(),
+                        proposer_tee_type: proposer_tee_type.clone(),
+                        proposer_tee_quote: proposer_tee_quote.clone(),
                         body: BeaconBlockBodyFulu {
                             randao_reveal,
                             eth1_data,
@@ -5791,6 +5846,8 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
                         proposer_index,
                         parent_root,
                         state_root: Hash256::zero(),
+                        proposer_tee_type: proposer_tee_type.clone(),
+                        proposer_tee_quote: proposer_tee_quote.clone(),
                         body: BeaconBlockBodyGloas {
                             randao_reveal,
                             eth1_data,
@@ -5864,25 +5921,16 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
         let (mut block, _) = block.deconstruct();
         *block.state_root_mut() = state_root;
 
-        // Get the proposer's TEE type and quote for the block header
-        // This ensures the block root matches the header root calculated with real TEE fields
-        let proposer_tee_type = state
-            .validators()
-            .get(proposer_index as usize)
-            .map(|v| v.tee_type.clone())
-            .unwrap_or_else(|| {
-                warn!(
-                    proposer_index = proposer_index,
-                    "Proposer validator not found, using default TEE type"
-                );
-                TEEType::SEV // Default fallback
-            });
-
-        // Get the TEE attestation quote from environment variable or system
-        // Format: base64-encoded quote from TEE_PROPOSER_ATTESTATION env var, or empty quote
-        let proposer_tee_quote = Self::get_tee_quote_for_proposer(proposer_index, &proposer_tee_type);
-
-        // Set TEE fields in thread-local storage so that canonical_root() and signing use real TEE fields
+        // TEE fields are already set in the block structure during construction.
+        // We use the TEE fields from PartialBeaconBlock (which were extracted from the state)
+        // to ensure consistency. The block already has these fields embedded, but we need
+        // them separately for the BeaconBlockResponse and for thread-local storage compatibility.
+        
+        // Note: Thread-local storage is no longer needed since TEE fields are stored in the block.
+        // However, we keep it for backward compatibility during the transition period.
+        
+        // Set TEE fields in thread-local storage for backward compatibility
+        // (can be removed once all code paths are updated)
         // This ensures that when the block is signed, it uses real TEE fields instead of placeholders
         types::beacon_block::set_block_tee_fields(proposer_tee_type.clone(), proposer_tee_quote.clone());
         
@@ -5980,6 +6028,8 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
             blob_items,
             execution_payload_value,
             consensus_block_value,
+            proposer_tee_type: proposer_tee_type.clone(),
+            proposer_tee_quote: proposer_tee_quote.clone(),
         })
     }
 

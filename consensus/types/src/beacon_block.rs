@@ -103,12 +103,18 @@ pub struct BeaconBlock<E: EthSpec, Payload: AbstractExecPayload<E> = FullPayload
     pub parent_root: Hash256,
     #[superstruct(getter(copy))]
     pub state_root: Hash256,
+    /// TEE type of the validator proposing this block (SEV, TDX, or CCA)
+    /// Defaults to placeholder (TDX) if not set during block production
+    pub proposer_tee_type: crate::tee_types::TEEType,
+    /// Fixed-size attestation quote provided by the proposer (8 KiB)
+    /// Defaults to placeholder if not set during block production
+    pub proposer_tee_quote: crate::tee_attestation::TEEQuote,
     #[superstruct(only(Base), partial_getter(rename = "body_base"))]
     pub body: BeaconBlockBodyBase<E, Payload>,
     #[superstruct(only(Altair), partial_getter(rename = "body_altair"))]
     pub body: BeaconBlockBodyAltair<E, Payload>,
     #[superstruct(only(Bellatrix), partial_getter(rename = "body_bellatrix"))]
-    pub body: BeaconBlockBodyBellatrix<E, Payload>,
+    pub body: BeaconBlockBodyBellatrix<E, Payload>, 
     #[superstruct(only(Capella), partial_getter(rename = "body_capella"))]
     pub body: BeaconBlockBodyCapella<E, Payload>,
     #[superstruct(only(Deneb), partial_getter(rename = "body_deneb"))]
@@ -202,19 +208,11 @@ impl<E: EthSpec, Payload: AbstractExecPayload<E>> BeaconBlock<E, Payload> {
     /// In Ethereum, the block root IS the header root. This method returns the header root
     /// (which includes TEE fields for TEE-extended blocks) rather than the block's tree hash.
     ///
-    /// NOTE: For locally produced blocks, ensure the header has real TEE fields by updating
-    /// the state's `latest_block_header` before calculating the root.
-    ///
-    /// If TEE fields are set via `set_block_tee_fields()`, they will be used instead of placeholders.
+    /// Uses the TEE fields stored in the block structure.
     pub fn canonical_root(&self) -> Hash256 {
-        // Return the header root, which includes TEE fields for TEE-extended blocks
+        // Return the header root, which includes TEE fields stored in the block
         // This ensures consistency: block root == header root
-        // Check if real TEE fields are available (set during block production)
-        if let Some((tee_type, tee_quote)) = get_block_tee_fields() {
-            self.block_header_with_tee(tee_type, tee_quote).canonical_root()
-        } else {
-            self.block_header().canonical_root()
-        }
+        self.block_header().canonical_root()
     }
 
     /// Returns a full `BeaconBlockHeader` of this block.
@@ -329,34 +327,32 @@ impl<'a, E: EthSpec, Payload: AbstractExecPayload<E>> BeaconBlockRef<'a, E, Payl
     /// In Ethereum, the block root IS the header root. This method returns the header root
     /// (which includes TEE fields for TEE-extended blocks) rather than the block's tree hash.
     ///
-    /// NOTE: For locally produced blocks, ensure the header has real TEE fields by updating
-    /// the state's `latest_block_header` before calculating the root.
-    ///
-    /// If TEE fields are set via `set_block_tee_fields()`, they will be used instead of placeholders.
+    /// Uses TEE fields from thread-local storage if available (for validator client signing),
+    /// otherwise uses the TEE fields stored in the block structure.
     pub fn canonical_root(&self) -> Hash256 {
-        // Return the header root, which includes TEE fields for TEE-extended blocks
-        // This ensures consistency: block root == header root
-        // Check if real TEE fields are available (set during block production)
-        if let Some((tee_type, tee_quote)) = get_block_tee_fields() {
-            self.block_header_with_tee(tee_type, tee_quote).canonical_root()
-        } else {
-            self.block_header().canonical_root()
-        }
+        // Check thread-local storage first (for validator client override)
+        // Then fall back to embedded TEE fields
+        self.block_header().canonical_root()
     }
 
     /// Returns a full `BeaconBlockHeader` of this block.
     /// 
-    /// NOTE: This method uses placeholder TEE fields. For block production, use
-    /// `block_header_with_tee()` instead to use real TEE fields from the validator.
+    /// Uses TEE fields from thread-local storage if available (for validator client signing),
+    /// otherwise uses the TEE fields stored in the block structure.
     pub fn block_header(&self) -> BeaconBlockHeader {
+        // Check thread-local storage first (for validator client override)
+        // Then fall back to embedded TEE fields
+        let (tee_type, tee_quote) = get_block_tee_fields()
+            .unwrap_or_else(|| (self.proposer_tee_type().clone(), self.proposer_tee_quote().clone()));
+        
         BeaconBlockHeader {
             slot: self.slot(),
             proposer_index: self.proposer_index(),
             parent_root: self.parent_root(),
             state_root: self.state_root(),
             body_root: self.body_root(),
-            proposer_tee_type: BeaconBlockHeader::placeholder_tee_type(),
-            proposer_tee_quote: BeaconBlockHeader::create_placeholder_tee_quote(),
+            proposer_tee_type: tee_type,
+            proposer_tee_quote: tee_quote,
         }
     }
 
@@ -384,8 +380,8 @@ impl<'a, E: EthSpec, Payload: AbstractExecPayload<E>> BeaconBlockRef<'a, E, Payl
     pub fn temporary_block_header(self) -> BeaconBlockHeader {
         BeaconBlockHeader {
             state_root: Hash256::zero(),
-            proposer_tee_type: BeaconBlockHeader::placeholder_tee_type(),
-            proposer_tee_quote: BeaconBlockHeader::create_placeholder_tee_quote(),
+            proposer_tee_type: self.proposer_tee_type().clone(),
+            proposer_tee_quote: self.proposer_tee_quote().clone(),
             ..self.block_header()
         }
     }
@@ -413,6 +409,8 @@ impl<E: EthSpec, Payload: AbstractExecPayload<E>> EmptyBlock for BeaconBlockBase
             proposer_index: 0,
             parent_root: Hash256::zero(),
             state_root: Hash256::zero(),
+            proposer_tee_type: crate::tee_types::TEEType::TDX, // Placeholder
+            proposer_tee_quote: crate::tee_attestation::TEEQuote::default(), // Placeholder
             body: BeaconBlockBodyBase {
                 randao_reveal: Signature::empty(),
                 eth1_data: Eth1Data {
@@ -542,6 +540,8 @@ impl<E: EthSpec, Payload: AbstractExecPayload<E>> EmptyBlock for BeaconBlockAlta
             proposer_index: 0,
             parent_root: Hash256::zero(),
             state_root: Hash256::zero(),
+            proposer_tee_type: crate::tee_types::TEEType::TDX, // Placeholder
+            proposer_tee_quote: crate::tee_attestation::TEEQuote::default(), // Placeholder
             body: BeaconBlockBodyAltair {
                 randao_reveal: Signature::empty(),
                 eth1_data: Eth1Data {
@@ -578,6 +578,8 @@ impl<E: EthSpec, Payload: AbstractExecPayload<E>> BeaconBlockAltair<E, Payload> 
             proposer_index: 0,
             parent_root: Hash256::zero(),
             state_root: Hash256::zero(),
+            proposer_tee_type: crate::tee_types::TEEType::TDX, // Placeholder
+            proposer_tee_quote: crate::tee_attestation::TEEQuote::default(), // Placeholder
             body: BeaconBlockBodyAltair {
                 proposer_slashings: base_block.body.proposer_slashings,
                 attester_slashings: base_block.body.attester_slashings,
@@ -609,6 +611,8 @@ impl<E: EthSpec, Payload: AbstractExecPayload<E>> EmptyBlock for BeaconBlockBell
             proposer_index: 0,
             parent_root: Hash256::zero(),
             state_root: Hash256::zero(),
+            proposer_tee_type: crate::tee_types::TEEType::TDX, // Placeholder
+            proposer_tee_quote: crate::tee_attestation::TEEQuote::default(), // Placeholder
             body: BeaconBlockBodyBellatrix {
                 randao_reveal: Signature::empty(),
                 eth1_data: Eth1Data {
@@ -640,6 +644,8 @@ impl<E: EthSpec, Payload: AbstractExecPayload<E>> EmptyBlock for BeaconBlockCape
             proposer_index: 0,
             parent_root: Hash256::zero(),
             state_root: Hash256::zero(),
+            proposer_tee_type: crate::tee_types::TEEType::TDX, // Placeholder
+            proposer_tee_quote: crate::tee_attestation::TEEQuote::default(), // Placeholder
             body: BeaconBlockBodyCapella {
                 randao_reveal: Signature::empty(),
                 eth1_data: Eth1Data {
@@ -672,6 +678,8 @@ impl<E: EthSpec, Payload: AbstractExecPayload<E>> EmptyBlock for BeaconBlockDene
             proposer_index: 0,
             parent_root: Hash256::zero(),
             state_root: Hash256::zero(),
+            proposer_tee_type: crate::tee_types::TEEType::TDX, // Placeholder
+            proposer_tee_quote: crate::tee_attestation::TEEQuote::default(), // Placeholder
             body: BeaconBlockBodyDeneb {
                 randao_reveal: Signature::empty(),
                 eth1_data: Eth1Data {
@@ -705,6 +713,8 @@ impl<E: EthSpec, Payload: AbstractExecPayload<E>> EmptyBlock for BeaconBlockElec
             proposer_index: 0,
             parent_root: Hash256::zero(),
             state_root: Hash256::zero(),
+            proposer_tee_type: crate::tee_types::TEEType::TDX, // Placeholder
+            proposer_tee_quote: crate::tee_attestation::TEEQuote::default(), // Placeholder
             body: BeaconBlockBodyElectra {
                 randao_reveal: Signature::empty(),
                 eth1_data: Eth1Data {
@@ -739,6 +749,8 @@ impl<E: EthSpec, Payload: AbstractExecPayload<E>> EmptyBlock for BeaconBlockFulu
             proposer_index: 0,
             parent_root: Hash256::zero(),
             state_root: Hash256::zero(),
+            proposer_tee_type: crate::tee_types::TEEType::TDX, // Placeholder
+            proposer_tee_quote: crate::tee_attestation::TEEQuote::default(), // Placeholder
             body: BeaconBlockBodyFulu {
                 randao_reveal: Signature::empty(),
                 eth1_data: Eth1Data {
@@ -770,6 +782,8 @@ impl<E: EthSpec, Payload: AbstractExecPayload<E>> EmptyBlock for BeaconBlockGloa
             proposer_index: 0,
             parent_root: Hash256::zero(),
             state_root: Hash256::zero(),
+            proposer_tee_type: crate::tee_types::TEEType::TDX, // Placeholder
+            proposer_tee_quote: crate::tee_attestation::TEEQuote::default(), // Placeholder
             body: BeaconBlockBodyGloas {
                 randao_reveal: Signature::empty(),
                 eth1_data: Eth1Data {
@@ -803,6 +817,8 @@ impl<E: EthSpec> From<BeaconBlockBase<E, BlindedPayload<E>>>
             proposer_index,
             parent_root,
             state_root,
+            proposer_tee_type,
+            proposer_tee_quote,
             body,
         } = block;
 
@@ -811,6 +827,8 @@ impl<E: EthSpec> From<BeaconBlockBase<E, BlindedPayload<E>>>
             proposer_index,
             parent_root,
             state_root,
+            proposer_tee_type,
+            proposer_tee_quote,
             body: body.into(),
         }
     }
@@ -825,6 +843,8 @@ impl<E: EthSpec> From<BeaconBlockAltair<E, BlindedPayload<E>>>
             proposer_index,
             parent_root,
             state_root,
+            proposer_tee_type,
+            proposer_tee_quote,
             body,
         } = block;
 
@@ -833,6 +853,8 @@ impl<E: EthSpec> From<BeaconBlockAltair<E, BlindedPayload<E>>>
             proposer_index,
             parent_root,
             state_root,
+            proposer_tee_type,
+            proposer_tee_quote,
             body: body.into(),
         }
     }
@@ -851,7 +873,10 @@ macro_rules! impl_from {
                     proposer_index,
                     parent_root,
                     state_root,
+                    proposer_tee_type,
+                    proposer_tee_quote,
                     body,
+                    ..
                 } = block;
 
                 let (body, payload) = ($body_expr)(body);
@@ -861,6 +886,8 @@ macro_rules! impl_from {
                     proposer_index,
                     parent_root,
                     state_root,
+                    proposer_tee_type,
+                    proposer_tee_quote,
                     body,
                 }, payload.map(Into::into))
             }
@@ -888,6 +915,8 @@ macro_rules! impl_clone_as_blinded {
                     proposer_index,
                     parent_root,
                     state_root,
+                    proposer_tee_type,
+                    proposer_tee_quote,
                     body,
                 } = self;
 
@@ -896,6 +925,8 @@ macro_rules! impl_clone_as_blinded {
                     proposer_index: *proposer_index,
                     parent_root: *parent_root,
                     state_root: *state_root,
+                    proposer_tee_type: proposer_tee_type.clone(),
+                    proposer_tee_quote: proposer_tee_quote.clone(),
                     body: body.clone_as_blinded(),
                 }
             }
@@ -994,6 +1025,8 @@ mod tests {
             proposer_index: u64::random_for_test(rng),
             parent_root: Hash256::random_for_test(rng),
             state_root: Hash256::random_for_test(rng),
+            proposer_tee_type: crate::tee_types::TEEType::TDX, // Placeholder
+            proposer_tee_quote: crate::tee_attestation::TEEQuote::default(), // Placeholder
             body: BeaconBlockBodyBase::random_for_test(rng),
         };
         let block = BeaconBlock::Base(inner_block.clone());
@@ -1013,6 +1046,8 @@ mod tests {
             proposer_index: u64::random_for_test(rng),
             parent_root: Hash256::random_for_test(rng),
             state_root: Hash256::random_for_test(rng),
+            proposer_tee_type: crate::tee_types::TEEType::TDX, // Placeholder
+            proposer_tee_quote: crate::tee_attestation::TEEQuote::default(), // Placeholder
             body: BeaconBlockBodyAltair::random_for_test(rng),
         };
         let block = BeaconBlock::Altair(inner_block.clone());

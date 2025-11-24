@@ -4,8 +4,8 @@ use crate::context_deserialize;
 use crate::{
     ContextDeserialize, ForkName, LightClientHeaderAltair, LightClientHeaderCapella,
     LightClientHeaderDeneb, LightClientHeaderElectra, LightClientHeaderFulu,
-    LightClientHeaderGloas, SignedBlindedBeaconBlock, light_client_update::*,
-    test_utils::TestRandom,
+    LightClientHeaderGloas, SignedBlindedBeaconBlock, SignedBeaconBlock, payload::BlindedPayload,
+    light_client_update::*, test_utils::TestRandom,
 };
 use derivative::Derivative;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -104,8 +104,7 @@ impl<E: EthSpec> LightClientFinalityUpdate<E> {
         signature_slot: Slot,
         chain_spec: &ChainSpec,
     ) -> Result<Self, Error> {
-        let finality_update = match attested_block
-            .fork_name(chain_spec)
+        let finality_update = match SignedBeaconBlock::<E, BlindedPayload<E>>::fork_name(attested_block, chain_spec)
             .map_err(|_| Error::InconsistentFork)?
         {
             ForkName::Altair | ForkName::Bellatrix => {

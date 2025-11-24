@@ -289,8 +289,8 @@ impl<E: EthSpec, Payload: AbstractExecPayload<E>> SignedBeaconBlock<E, Payload> 
             parent_root: self.parent_root(),
             state_root: self.state_root(),
             body_root: body_merkle_tree.hash(),
-            proposer_tee_type: BeaconBlockHeader::placeholder_tee_type(),
-            proposer_tee_quote: BeaconBlockHeader::create_placeholder_tee_quote(),
+            proposer_tee_type: self.message().proposer_tee_type().clone(),
+            proposer_tee_quote: self.message().proposer_tee_quote().clone(),
         };
 
         let signed_header = SignedBeaconBlockHeader {
@@ -392,6 +392,8 @@ impl<E: EthSpec> SignedBeaconBlockBellatrix<E, BlindedPayload<E>> {
                     proposer_index,
                     parent_root,
                     state_root,
+                    proposer_tee_type,
+                    proposer_tee_quote,
                     body:
                         BeaconBlockBodyBellatrix {
                             randao_reveal,
@@ -414,6 +416,8 @@ impl<E: EthSpec> SignedBeaconBlockBellatrix<E, BlindedPayload<E>> {
                 proposer_index,
                 parent_root,
                 state_root,
+                proposer_tee_type,
+                proposer_tee_quote,
                 body: BeaconBlockBodyBellatrix {
                     randao_reveal,
                     eth1_data,
@@ -444,6 +448,8 @@ impl<E: EthSpec> SignedBeaconBlockCapella<E, BlindedPayload<E>> {
                     proposer_index,
                     parent_root,
                     state_root,
+                    proposer_tee_type,
+                    proposer_tee_quote,
                     body:
                         BeaconBlockBodyCapella {
                             randao_reveal,
@@ -467,6 +473,8 @@ impl<E: EthSpec> SignedBeaconBlockCapella<E, BlindedPayload<E>> {
                 proposer_index,
                 parent_root,
                 state_root,
+                proposer_tee_type,
+                proposer_tee_quote,
                 body: BeaconBlockBodyCapella {
                     randao_reveal,
                     eth1_data,
@@ -498,6 +506,8 @@ impl<E: EthSpec> SignedBeaconBlockDeneb<E, BlindedPayload<E>> {
                     proposer_index,
                     parent_root,
                     state_root,
+                    proposer_tee_type,
+                    proposer_tee_quote,
                     body:
                         BeaconBlockBodyDeneb {
                             randao_reveal,
@@ -522,6 +532,8 @@ impl<E: EthSpec> SignedBeaconBlockDeneb<E, BlindedPayload<E>> {
                 proposer_index,
                 parent_root,
                 state_root,
+                proposer_tee_type,
+                proposer_tee_quote,
                 body: BeaconBlockBodyDeneb {
                     randao_reveal,
                     eth1_data,
@@ -554,6 +566,8 @@ impl<E: EthSpec> SignedBeaconBlockElectra<E, BlindedPayload<E>> {
                     proposer_index,
                     parent_root,
                     state_root,
+                    proposer_tee_type,
+                    proposer_tee_quote,
                     body:
                         BeaconBlockBodyElectra {
                             randao_reveal,
@@ -579,6 +593,8 @@ impl<E: EthSpec> SignedBeaconBlockElectra<E, BlindedPayload<E>> {
                 proposer_index,
                 parent_root,
                 state_root,
+                proposer_tee_type,
+                proposer_tee_quote,
                 body: BeaconBlockBodyElectra {
                     randao_reveal,
                     eth1_data,
@@ -612,6 +628,8 @@ impl<E: EthSpec> SignedBeaconBlockFulu<E, BlindedPayload<E>> {
                     proposer_index,
                     parent_root,
                     state_root,
+                    proposer_tee_type,
+                    proposer_tee_quote,
                     body:
                         BeaconBlockBodyFulu {
                             randao_reveal,
@@ -637,6 +655,8 @@ impl<E: EthSpec> SignedBeaconBlockFulu<E, BlindedPayload<E>> {
                 proposer_index,
                 parent_root,
                 state_root,
+                proposer_tee_type,
+                proposer_tee_quote,
                 body: BeaconBlockBodyFulu {
                     randao_reveal,
                     eth1_data,
@@ -670,6 +690,8 @@ impl<E: EthSpec> SignedBeaconBlockGloas<E, BlindedPayload<E>> {
                     proposer_index,
                     parent_root,
                     state_root,
+                    proposer_tee_type,
+                    proposer_tee_quote,
                     body:
                         BeaconBlockBodyGloas {
                             randao_reveal,
@@ -695,6 +717,8 @@ impl<E: EthSpec> SignedBeaconBlockGloas<E, BlindedPayload<E>> {
                 proposer_index,
                 parent_root,
                 state_root,
+                proposer_tee_type,
+                proposer_tee_quote,
                 body: BeaconBlockBodyGloas {
                     randao_reveal,
                     eth1_data,
@@ -721,26 +745,26 @@ impl<E: EthSpec> SignedBeaconBlock<E, BlindedPayload<E>> {
         self,
         execution_payload: Option<ExecutionPayload<E>>,
     ) -> Option<SignedBeaconBlock<E, FullPayload<E>>> {
-        let full_block = match (self, execution_payload) {
-            (SignedBeaconBlock::Base(block), _) => SignedBeaconBlock::Base(block.into()),
-            (SignedBeaconBlock::Altair(block), _) => SignedBeaconBlock::Altair(block.into()),
+        let full_block: SignedBeaconBlock<E, FullPayload<E>> = match (self, execution_payload) {
+            (SignedBeaconBlock::Base(block), _) => SignedBeaconBlock::<E, FullPayload<E>>::Base(block.into()),
+            (SignedBeaconBlock::Altair(block), _) => SignedBeaconBlock::<E, FullPayload<E>>::Altair(block.into()),
             (SignedBeaconBlock::Bellatrix(block), Some(ExecutionPayload::Bellatrix(payload))) => {
-                SignedBeaconBlock::Bellatrix(block.into_full_block(payload))
+                SignedBeaconBlock::<E, FullPayload<E>>::Bellatrix(block.into_full_block(payload))
             }
             (SignedBeaconBlock::Capella(block), Some(ExecutionPayload::Capella(payload))) => {
-                SignedBeaconBlock::Capella(block.into_full_block(payload))
+                SignedBeaconBlock::<E, FullPayload<E>>::Capella(block.into_full_block(payload))
             }
             (SignedBeaconBlock::Deneb(block), Some(ExecutionPayload::Deneb(payload))) => {
-                SignedBeaconBlock::Deneb(block.into_full_block(payload))
+                SignedBeaconBlock::<E, FullPayload<E>>::Deneb(block.into_full_block(payload))
             }
             (SignedBeaconBlock::Electra(block), Some(ExecutionPayload::Electra(payload))) => {
-                SignedBeaconBlock::Electra(block.into_full_block(payload))
+                SignedBeaconBlock::<E, FullPayload<E>>::Electra(block.into_full_block(payload))
             }
             (SignedBeaconBlock::Fulu(block), Some(ExecutionPayload::Fulu(payload))) => {
-                SignedBeaconBlock::Fulu(block.into_full_block(payload))
+                SignedBeaconBlock::<E, FullPayload<E>>::Fulu(block.into_full_block(payload))
             }
             (SignedBeaconBlock::Gloas(block), Some(ExecutionPayload::Gloas(payload))) => {
-                SignedBeaconBlock::Gloas(block.into_full_block(payload))
+                SignedBeaconBlock::<E, FullPayload<E>>::Gloas(block.into_full_block(payload))
             }
             // avoid wildcard matching forks so that compiler will
             // direct us here when a new fork has been added
@@ -834,7 +858,7 @@ pub mod ssz_tagged_signed_beacon_block {
             block: &SignedBeaconBlock<E, Payload>,
             buf: &mut Vec<u8>,
         ) {
-            let fork_name = block.fork_name_unchecked();
+            let fork_name = <SignedBeaconBlock<E, Payload>>::fork_name_unchecked(block);
             fork_name.ssz_append(buf);
             block.ssz_append(buf);
         }
@@ -843,7 +867,7 @@ pub mod ssz_tagged_signed_beacon_block {
             block: &SignedBeaconBlock<E, Payload>,
         ) -> Vec<u8> {
             let mut buf = vec![];
-            ssz_append(block, &mut buf);
+            ssz_append::<E, Payload>(block, &mut buf);
 
             buf
         }
@@ -874,29 +898,29 @@ pub mod ssz_tagged_signed_beacon_block {
                 .ok_or(DecodeError::OutOfBoundsByte { i: 1 })?;
 
             match ForkName::from_ssz_bytes(&[fork_byte])? {
-                ForkName::Base => Ok(SignedBeaconBlock::Base(
-                    SignedBeaconBlockBase::from_ssz_bytes(body)?,
+                ForkName::Base => Ok(SignedBeaconBlock::<E, Payload>::Base(
+                    SignedBeaconBlockBase::<E, Payload>::from_ssz_bytes(body)?,
                 )),
-                ForkName::Altair => Ok(SignedBeaconBlock::Altair(
-                    SignedBeaconBlockAltair::from_ssz_bytes(body)?,
+                ForkName::Altair => Ok(SignedBeaconBlock::<E, Payload>::Altair(
+                    SignedBeaconBlockAltair::<E, Payload>::from_ssz_bytes(body)?,
                 )),
-                ForkName::Bellatrix => Ok(SignedBeaconBlock::Bellatrix(
-                    SignedBeaconBlockBellatrix::from_ssz_bytes(body)?,
+                ForkName::Bellatrix => Ok(SignedBeaconBlock::<E, Payload>::Bellatrix(
+                    SignedBeaconBlockBellatrix::<E, Payload>::from_ssz_bytes(body)?,
                 )),
-                ForkName::Capella => Ok(SignedBeaconBlock::Capella(
-                    SignedBeaconBlockCapella::from_ssz_bytes(body)?,
+                ForkName::Capella => Ok(SignedBeaconBlock::<E, Payload>::Capella(
+                    SignedBeaconBlockCapella::<E, Payload>::from_ssz_bytes(body)?,
                 )),
-                ForkName::Deneb => Ok(SignedBeaconBlock::Deneb(
-                    SignedBeaconBlockDeneb::from_ssz_bytes(body)?,
+                ForkName::Deneb => Ok(SignedBeaconBlock::<E, Payload>::Deneb(
+                    SignedBeaconBlockDeneb::<E, Payload>::from_ssz_bytes(body)?,
                 )),
-                ForkName::Electra => Ok(SignedBeaconBlock::Electra(
-                    SignedBeaconBlockElectra::from_ssz_bytes(body)?,
+                ForkName::Electra => Ok(SignedBeaconBlock::<E, Payload>::Electra(
+                    SignedBeaconBlockElectra::<E, Payload>::from_ssz_bytes(body)?,
                 )),
-                ForkName::Fulu => Ok(SignedBeaconBlock::Fulu(
-                    SignedBeaconBlockFulu::from_ssz_bytes(body)?,
+                ForkName::Fulu => Ok(SignedBeaconBlock::<E, Payload>::Fulu(
+                    SignedBeaconBlockFulu::<E, Payload>::from_ssz_bytes(body)?,
                 )),
-                ForkName::Gloas => Ok(SignedBeaconBlock::Gloas(
-                    SignedBeaconBlockGloas::from_ssz_bytes(body)?,
+                ForkName::Gloas => Ok(SignedBeaconBlock::<E, Payload>::Gloas(
+                    SignedBeaconBlockGloas::<E, Payload>::from_ssz_bytes(body)?,
                 )),
             }
         }
@@ -919,7 +943,7 @@ pub mod ssz_tagged_signed_beacon_block_arc {
         pub fn from_ssz_bytes<E: EthSpec, Payload: AbstractExecPayload<E>>(
             bytes: &[u8],
         ) -> Result<Arc<SignedBeaconBlock<E, Payload>>, DecodeError> {
-            ssz_tagged_signed_beacon_block::decode::from_ssz_bytes(bytes).map(Arc::new)
+            ssz_tagged_signed_beacon_block::decode::from_ssz_bytes::<E, Payload>(bytes).map(Arc::new)
         }
     }
 }

@@ -3,7 +3,8 @@ use crate::{
     BeaconState, ChainSpec, ContextDeserialize, EthSpec, FixedVector, ForkName, Hash256,
     LightClientHeader, LightClientHeaderAltair, LightClientHeaderCapella, LightClientHeaderDeneb,
     LightClientHeaderElectra, LightClientHeaderFulu, LightClientHeaderGloas,
-    SignedBlindedBeaconBlock, Slot, SyncCommittee, light_client_update::*, test_utils::TestRandom,
+    SignedBlindedBeaconBlock, SignedBeaconBlock, payload::BlindedPayload, Slot, SyncCommittee,
+    light_client_update::*, test_utils::TestRandom,
 };
 use derivative::Derivative;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -143,8 +144,7 @@ impl<E: EthSpec> LightClientBootstrap<E> {
         current_sync_committee_branch: Vec<Hash256>,
         chain_spec: &ChainSpec,
     ) -> Result<Self, Error> {
-        let light_client_bootstrap = match block
-            .fork_name(chain_spec)
+        let light_client_bootstrap = match SignedBeaconBlock::<E, BlindedPayload<E>>::fork_name(block, chain_spec)
             .map_err(|_| Error::InconsistentFork)?
         {
             ForkName::Base => return Err(Error::AltairForkNotActive),
@@ -193,8 +193,7 @@ impl<E: EthSpec> LightClientBootstrap<E> {
         let current_sync_committee_branch = beacon_state.compute_current_sync_committee_proof()?;
         let current_sync_committee = beacon_state.current_sync_committee()?.clone();
 
-        let light_client_bootstrap = match block
-            .fork_name(chain_spec)
+        let light_client_bootstrap = match SignedBeaconBlock::<E, BlindedPayload<E>>::fork_name(block, chain_spec)
             .map_err(|_| Error::InconsistentFork)?
         {
             ForkName::Base => return Err(Error::AltairForkNotActive),

@@ -3,7 +3,8 @@
 
 use crate::{
     CONSENSUS_BLOCK_VALUE_HEADER, CONSENSUS_VERSION_HEADER, EXECUTION_PAYLOAD_BLINDED_HEADER,
-    EXECUTION_PAYLOAD_VALUE_HEADER, Error as ServerError,
+    EXECUTION_PAYLOAD_VALUE_HEADER, PROPOSER_TEE_QUOTE_HEADER, PROPOSER_TEE_TYPE_HEADER,
+    Error as ServerError,
 };
 use enr::{CombinedKey, Enr};
 use mediatype::{MediaType, MediaTypeList, names};
@@ -1729,7 +1730,7 @@ fn dummy_consensus_version() -> ForkName {
 }
 
 /// Metadata about a `ProduceBlockV3Response` which is returned in the body & headers.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProduceBlockV3Metadata {
     // The consensus version is serialized & deserialized by `ForkVersionedResponse`.
     #[serde(
@@ -1743,6 +1744,13 @@ pub struct ProduceBlockV3Metadata {
     pub execution_payload_value: Uint256,
     #[serde(with = "serde_utils::u256_dec")]
     pub consensus_block_value: Uint256,
+    /// TEE type of the proposer (for block signing with real TEE fields)
+    #[serde(default)]
+    pub proposer_tee_type: Option<types::tee_types::TEEType>,
+    /// TEE attestation quote of the proposer (for block signing with real TEE fields)
+    /// Serialized as base64 string
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposer_tee_quote: Option<String>,
 }
 
 impl<E: EthSpec> FullBlockContents<E> {
@@ -1892,11 +1900,24 @@ impl TryFrom<&HeaderMap> for ProduceBlockV3Metadata {
                     .map_err(|e| format!("invalid {CONSENSUS_BLOCK_VALUE_HEADER}: {e:?}"))
             })?;
 
+        // TEE fields are optional and may be present in headers (for SSZ responses) or JSON body (for JSON responses)
+        let proposer_tee_type = headers
+            .get(PROPOSER_TEE_TYPE_HEADER)
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| types::tee_types::TEEType::from_str(s).ok());
+        
+        let proposer_tee_quote = headers
+            .get(PROPOSER_TEE_QUOTE_HEADER)
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.to_string());
+
         Ok(ProduceBlockV3Metadata {
             consensus_version,
             execution_payload_blinded,
             execution_payload_value,
             consensus_block_value,
+            proposer_tee_type,
+            proposer_tee_quote,
         })
     }
 }

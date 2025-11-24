@@ -100,6 +100,8 @@ pub trait ValidatorStore: Send + Sync {
         validator_pubkey: PublicKeyBytes,
         block: UnsignedBlock<Self::E>,
         current_slot: Slot,
+        proposer_tee_type: Option<types::tee_types::TEEType>,
+        proposer_tee_quote: Option<types::tee_attestation::TEEQuote>,
     ) -> impl Future<Output = Result<SignedBlock<Self::E>, Error<Self::Error>>> + Send;
 
     fn sign_attestation(

@@ -110,7 +110,7 @@ impl<E: EthSpec> BlobSidecar<E> {
     pub fn new(
         index: usize,
         blob: Blob<E>,
-        signed_block: &SignedBeaconBlock<E>,
+        signed_block: &SignedBeaconBlock<E, crate::FullPayload<E>>,
         kzg_proof: KzgProof,
     ) -> Result<Self, BlobSidecarError> {
         let expected_kzg_commitments = signed_block
@@ -275,7 +275,7 @@ impl<E: EthSpec> BlobSidecar<E> {
 
     pub fn build_sidecars(
         blobs: BlobsList<E>,
-        block: &SignedBeaconBlock<E>,
+        block: &SignedBeaconBlock<E, crate::FullPayload<E>>,
         kzg_proofs: KzgProofs<E>,
         spec: &ChainSpec,
     ) -> Result<BlobSidecarList<E>, BlobSidecarError> {
@@ -286,7 +286,7 @@ impl<E: EthSpec> BlobSidecar<E> {
         }
         RuntimeVariableList::new(
             blob_sidecars,
-            spec.max_blobs_per_block(block.epoch()) as usize,
+            spec.max_blobs_per_block(<SignedBeaconBlock<E, crate::FullPayload<E>>>::epoch(block)) as usize,
         )
         .map_err(BlobSidecarError::SszTypes)
     }

@@ -82,6 +82,19 @@ impl TEEType {
     }
 }
 
+impl std::str::FromStr for TEEType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "SEV" => Ok(TEEType::SEV),
+            "TDX" => Ok(TEEType::TDX),
+            "CCA" => Ok(TEEType::CCA),
+            _ => Err(format!("Invalid TEE type: {}. Expected SEV, TDX, or CCA", s)),
+        }
+    }
+}
+
 /// TEE validator structure replacing the traditional PoS validator
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TEEValidator {
