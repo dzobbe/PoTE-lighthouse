@@ -130,7 +130,7 @@ impl From<BeaconBlockHeaderVariable> for BeaconBlockHeader {
         let quote_bytes = if value.proposer_tee_quote.is_empty() {
             TEEQuote::default()
         } else {
-            let slice = value.proposer_tee_quote.as_ref();
+            let slice: &[u8] = value.proposer_tee_quote.as_ref();
             tracing::info!(
                 actual_len = slice.len(),
                 expected_len = TEE_QUOTE_SIZE,

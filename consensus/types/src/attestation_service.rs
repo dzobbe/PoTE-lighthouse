@@ -110,6 +110,7 @@ async fn verify_amd_attestation(quote_data: &[u8]) -> Result<bool, String> {
     
     #[cfg(not(feature = "tee-attestation"))]
     {
+        let _ = quote_data; // Parameter not used when feature is disabled
         tracing::warn!("AMD attestation feature not enabled (requires tee-attestation feature on Linux)");
         Ok(false)
     }
@@ -143,6 +144,7 @@ async fn verify_tdx_attestation(quote_data: &[u8]) -> Result<bool, String> {
     
     #[cfg(not(all(feature = "tee-attestation", feature = "attestation-tdx")))]
     {
+        let _ = quote_data; // Parameter not used when feature is disabled
         tracing::warn!("TDX attestation feature not enabled (requires tee-attestation feature on Linux)");
         Ok(false)
     }
