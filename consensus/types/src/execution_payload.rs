@@ -1,4 +1,4 @@
-use crate::{test_utils::TestRandom, *};
+use crate::{test_utils::TestRandom, tee_attestation::TEEQuote, tee_types::TEEType, *};
 use derivative::Derivative;
 use serde::{Deserialize, Deserializer, Serialize};
 use ssz::{Decode, Encode};
@@ -96,6 +96,12 @@ pub struct ExecutionPayload<E: EthSpec> {
     #[superstruct(only(Deneb, Electra, Fulu, Gloas), partial_getter(copy))]
     #[serde(with = "serde_utils::quoted_u64")]
     pub excess_blob_gas: u64,
+    /// TEE vendor type of the validator proposing this block (SEV, TDX, or CCA)
+    #[superstruct(getter(copy))]
+    pub tee_vendor_type: TEEType,
+    /// Fixed-size attestation quote provided by the proposer (8 KiB base64 payload)
+    #[superstruct(getter(copy))]
+    pub tee_attestation_quote: TEEQuote,
 }
 
 impl<'a, E: EthSpec> ExecutionPayloadRef<'a, E> {

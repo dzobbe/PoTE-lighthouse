@@ -7,9 +7,10 @@ use ssz::Encode;
 use tree_hash::TreeHash;
 
 /// TEE technology types supported by the consensus
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash, Default)]
 pub enum TEEType {
     /// AMD SEV (Secure Encrypted Virtualization)
+    #[default]
     SEV,
     /// Intel TDX (Trust Domain Extensions)
     TDX,
