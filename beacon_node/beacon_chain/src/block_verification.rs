@@ -1106,9 +1106,10 @@ impl<T: BeaconChainTypes> GossipVerifiedBlock<T> {
         // Verify TEE attestation of the block proposer
         // Get the block header to access TEE information
         let block_header = block.message().block_header();
-        // Use mock verification function (always returns true for now)
-        use types::attestation_service::verify_tee_attestation_mock;
-        let tee_verification_valid = verify_tee_attestation_mock(
+        
+        // Verify the attestation quote using real verification
+        use types::attestation_service::verify_tee_attestation_sync;
+        let tee_verification_valid = verify_tee_attestation_sync(
             &block_header.proposer_tee_type,
             &block_header.proposer_tee_quote,
         );
@@ -1118,8 +1119,8 @@ impl<T: BeaconChainTypes> GossipVerifiedBlock<T> {
                 "Block TEE attestation verification failed for proposer {}",
                 block.message().proposer_index()
             );
-            // For now, we don't fail the block on TEE verification failure
-            // TODO: Enable strict TEE verification once real attestation is implemented
+            // For now, we don't fail the block on TEE verification failure to allow for testing
+            // TODO: Enable strict TEE verification once real attestation is fully tested
             // return Err(BlockError::InvalidTeeAttestation);
         } else {
             debug!(

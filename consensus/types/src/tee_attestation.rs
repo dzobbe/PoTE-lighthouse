@@ -153,17 +153,27 @@ impl TEEQuote {
     }
 
     /// Decode a base64-encoded representation of the quote.
+    /// If the decoded quote is smaller than TEE_QUOTE_SIZE, pads with zeros.
     pub fn from_base64(encoded: &str) -> Result<Self, TEEQuoteError> {
         let decoded = base64::decode(encoded).map_err(TEEQuoteError::Base64Decoding)?;
-        if decoded.len() != TEE_QUOTE_SIZE {
+        if decoded.len() > TEE_QUOTE_SIZE {
             return Err(TEEQuoteError::InvalidLength {
                 expected: TEE_QUOTE_SIZE,
                 actual: decoded.len(),
             });
         }
         let mut bytes = [0u8; TEE_QUOTE_SIZE];
-        bytes.copy_from_slice(&decoded);
+        let copy_len = decoded.len().min(TEE_QUOTE_SIZE);
+        bytes[..copy_len].copy_from_slice(&decoded[..copy_len]);
         Ok(Self { bytes })
+    }
+
+    /// Create a quote from raw bytes, padding with zeros if smaller than TEE_QUOTE_SIZE.
+    pub fn from_bytes_padded(data: &[u8]) -> Self {
+        let mut bytes = [0u8; TEE_QUOTE_SIZE];
+        let copy_len = data.len().min(TEE_QUOTE_SIZE);
+        bytes[..copy_len].copy_from_slice(&data[..copy_len]);
+        Self { bytes }
     }
 
     /// Encode the quote to a base64 string.

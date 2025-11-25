@@ -8,6 +8,7 @@ use tree_hash::TreeHash;
 
 /// TEE technology types supported by the consensus
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[serde(rename_all = "lowercase")]
 pub enum TEEType {
     /// AMD SEV (Secure Encrypted Virtualization)
     SEV,
@@ -86,11 +87,14 @@ impl std::str::FromStr for TEEType {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "SEV" => Ok(TEEType::SEV),
-            "TDX" => Ok(TEEType::TDX),
-            "CCA" => Ok(TEEType::CCA),
-            _ => Err(format!("Invalid TEE type: {}. Expected SEV, TDX, or CCA", s)),
+        match s.trim().to_ascii_lowercase().as_str() {
+            "sev" => Ok(TEEType::SEV),
+            "tdx" => Ok(TEEType::TDX),
+            "cca" => Ok(TEEType::CCA),
+            _ => Err(format!(
+                "Invalid TEE type: {}. Expected SEV, TDX, or CCA",
+                s
+            )),
         }
     }
 }
@@ -118,11 +122,7 @@ pub struct TEEValidator {
 
 impl TEEValidator {
     /// Create a new TEE validator
-    pub fn new(
-        pubkey: PublicKeyBytes,
-        tee_type: TEEType,
-        attestation_quote: TEEQuote,
-    ) -> Self {
+    pub fn new(pubkey: PublicKeyBytes, tee_type: TEEType, attestation_quote: TEEQuote) -> Self {
         Self {
             pubkey,
             tee_type,

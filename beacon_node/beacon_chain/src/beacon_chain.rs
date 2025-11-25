@@ -4552,12 +4552,68 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
             }
         }
 
-        // TODO: In production, retrieve quote from system TEE attestation service
-        // For SEV: Use AMD SEV API
-        // For TDX: Use Intel TDX attestation
-        // For CCA: Use ARM CCA attestation
+        // Try to generate real TEE attestation quote from system
+        // Use custom data that includes proposer index and slot for uniqueness
+        let custom_data = format!("proposer:{}", proposer_index).into_bytes();
         
-        // For testing: Generate a random 8192-byte quote
+        // Try to get the current runtime handle to block on async generation
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                match handle.block_on(types::attestation_service::generate_tee_quote(tee_type, &custom_data)) {
+                    Ok(quote) => {
+                        info!(
+                            proposer_index = proposer_index,
+                            tee_type = ?tee_type,
+                            "Generated real TEE attestation quote from system"
+                        );
+                        return quote;
+                    }
+                    Err(e) => {
+                        warn!(
+                            proposer_index = proposer_index,
+                            tee_type = ?tee_type,
+                            error = %e,
+                            "Failed to generate real TEE attestation quote, falling back to random"
+                        );
+                    }
+                }
+            }
+            Err(_) => {
+                // No runtime available, try to create one
+                match tokio::runtime::Runtime::new() {
+                    Ok(rt) => {
+                        match rt.block_on(types::attestation_service::generate_tee_quote(tee_type, &custom_data)) {
+                            Ok(quote) => {
+                                info!(
+                                    proposer_index = proposer_index,
+                                    tee_type = ?tee_type,
+                                    "Generated real TEE attestation quote from system (new runtime)"
+                                );
+                                return quote;
+                            }
+                            Err(e) => {
+                                warn!(
+                                    proposer_index = proposer_index,
+                                    tee_type = ?tee_type,
+                                    error = %e,
+                                    "Failed to generate real TEE attestation quote, falling back to random"
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            proposer_index = proposer_index,
+                            tee_type = ?tee_type,
+                            error = %e,
+                            "Failed to create tokio runtime for attestation generation, falling back to random"
+                        );
+                    }
+                }
+            }
+        }
+        
+        // Fallback: Generate a random 8192-byte quote for testing
         // This ensures each block production gets a unique quote
         use rand::{Rng, RngCore};
         let mut rng = rand::thread_rng();
@@ -4567,7 +4623,7 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
         info!(
             proposer_index = proposer_index,
             tee_type = ?tee_type,
-            "No TEE quote found in environment variables, generating random 8192-byte quote for testing"
+            "No TEE quote found in environment variables and real generation failed, generating random 8192-byte quote for testing"
         );
         
         TEEQuote::from_bytes(random_bytes)
