@@ -502,12 +502,9 @@ impl ValidatorsDiff {
                             } else {
                                 Epoch::new(0)
                             },
-                            // tee_type can change on index re-use
-                            tee_type: if pubkey_changed {
-                                y.tee_type.clone()
-                            } else {
-                                types::tee_types::TEEType::SEV // Default to SEV
-                            },
+                            // tee_type can change on index re-use or if explicitly changed
+                            // Always store the new TEE type; apply logic will check if it differs
+                            tee_type: y.tee_type.clone(),
                         }
                     }
                 } else {
@@ -557,8 +554,10 @@ impl ValidatorsDiff {
                 if diff.effective_balance != 0 {
                     x.effective_balance = x.effective_balance.wrapping_add(diff.effective_balance);
                 }
-                // Update tee_type on pubkey change (index re-use)
-                if pubkey_changed {
+                // Update tee_type on pubkey change (index re-use) or if TEE type changed
+                // Note: We need to check if the diff TEE type differs from current to avoid
+                // overwriting with a sentinel value when TEE type hasn't actually changed
+                if pubkey_changed || diff.tee_type != x.tee_type {
                     x.tee_type = diff.tee_type.clone();
                 }
                 if diff.activation_eligibility_epoch != Epoch::new(0) {
