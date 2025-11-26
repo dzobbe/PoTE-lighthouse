@@ -7,7 +7,7 @@ ARG CARGO_USE_GIT_CLI=true
 # Install TSS2 libraries if tee-attestation feature is enabled
 # Check ARG before setting ENV to ensure it's available
 RUN if echo "${FEATURES}" | grep -q "tee-attestation"; then \
-    apt-get install -y pkg-config libtss2-dev libtss2-tctildr-dev libtss2-tcti-dev libtss2-tcti-device0; \
+    apt-get install -y pkg-config libtss2-dev; \
     fi
 ENV FEATURES=$FEATURES
 ENV PROFILE=$PROFILE

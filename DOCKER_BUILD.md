@@ -21,10 +21,7 @@ docker build --build-arg FEATURES="gnosis,slasher-lmdb,tee-attestation" -t light
 The Dockerfiles automatically detect when `tee-attestation` is included in the `FEATURES` build argument and install the required TSS2 libraries:
 
 - `pkg-config`
-- `libtss2-dev`
-- `libtss2-tctildr-dev`
-- `libtss2-tcti-dev`
-- `libtss2-tcti-device0`
+- `libtss2-dev` (includes all TSS2 development headers and runtime dependencies)
 
 These libraries are only installed when the `tee-attestation` feature is requested, keeping the base image minimal when not needed.
 
