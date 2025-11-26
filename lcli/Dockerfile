@@ -5,6 +5,10 @@ FROM rust:1.88.0-bullseye AS builder
 RUN apt-get update && apt-get -y upgrade && apt-get install -y cmake libclang-dev
 COPY . lighthouse
 ARG FEATURES
+# Install TSS2 libraries if tee-attestation feature is enabled
+RUN if echo "${FEATURES}" | grep -q "tee-attestation"; then \
+    apt-get install -y pkg-config libtss2-dev libtss2-tctildr-dev libtss2-tcti-dev libtss2-tcti-device0; \
+    fi
 ENV FEATURES=$FEATURES
 RUN cd lighthouse && make install-lcli
 
