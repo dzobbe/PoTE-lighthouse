@@ -4615,8 +4615,8 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
         
         // Fallback: Generate a random 8192-byte quote for testing
         // This ensures each block production gets a unique quote
-        use rand::{Rng, RngCore};
-        let mut rng = rand::thread_rng();
+        use rand::RngCore;
+        let mut rng = rand::rng();
         let mut random_bytes = [0u8; types::tee_attestation::TEE_QUOTE_SIZE];
         rng.fill_bytes(&mut random_bytes);
         
