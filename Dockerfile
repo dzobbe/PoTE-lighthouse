@@ -17,6 +17,8 @@ RUN cd lighthouse && make
 FROM ubuntu:22.04
 RUN apt-get update && apt-get -y upgrade && apt-get install -y --no-install-recommends \
   libssl-dev \
+  libtss2-dev \
+  libclang-dev \
   ca-certificates \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*

@@ -4573,7 +4573,7 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
                             proposer_index = proposer_index,
                             tee_type = ?tee_type,
                             error = %e,
-                            "Failed to generate real TEE attestation quote, falling back to random"
+                            "⚠️  Failed to generate real TEE attestation quote, falling back to random"
                         );
                     }
                 }
@@ -4596,7 +4596,7 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
                                     proposer_index = proposer_index,
                                     tee_type = ?tee_type,
                                     error = %e,
-                                    "Failed to generate real TEE attestation quote, falling back to random"
+                                    "⚠️  Failed to generate real TEE attestation quote, falling back to random"
                                 );
                             }
                         }
@@ -4623,7 +4623,7 @@ impl<T: BeaconChainTypes> BeaconChain<T> {
         info!(
             proposer_index = proposer_index,
             tee_type = ?tee_type,
-            "No TEE quote found in environment variables and real generation failed, generating random 8192-byte quote for testing"
+            "⚠️  No TEE quote found in environment variables and real generation failed, generating random 8192-byte quote for testing"
         );
         
         TEEQuote::from_bytes(random_bytes)

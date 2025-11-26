@@ -233,10 +233,28 @@ pub fn verify_tee_attestation_sync(tee_type: &TEEType, quote: &TEEQuote) -> bool
         quote.as_bytes().len()
     );
 
-    // For synchronous contexts, try to use existing runtime handle first
+    // Clone the inputs for use in the async context
+    let tee_type = tee_type.clone();
+    let quote = quote.clone();
+
+    // Check if we're in a tokio runtime context
     match tokio::runtime::Handle::try_current() {
-        Ok(handle) => {
-            handle.block_on(verify_tee_attestation(tee_type, quote)).unwrap_or(false)
+        Ok(_handle) => {
+            // We're in a tokio runtime. Using block_on from within a runtime can cause deadlocks/panics,
+            // so we always create a separate runtime in a blocking thread to avoid this issue.
+            // This is safe because we're likely already in a blocking context (from spawn_blocking_handle).
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().unwrap_or_else(|e| {
+                    tracing::error!("Failed to create tokio runtime in blocking thread: {}", e);
+                    panic!("Cannot verify attestation without tokio runtime");
+                });
+                rt.block_on(verify_tee_attestation(&tee_type, &quote)).unwrap_or(false)
+            })
+            .join()
+            .unwrap_or_else(|e| {
+                tracing::error!("Thread panicked during TEE verification: {:?}", e);
+                false
+            })
         }
         Err(_) => {
             // No runtime available, create a new one
@@ -244,7 +262,7 @@ pub fn verify_tee_attestation_sync(tee_type: &TEEType, quote: &TEEQuote) -> bool
                 tracing::error!("Failed to create tokio runtime: {}", e);
                 panic!("Cannot verify attestation without tokio runtime");
             });
-            rt.block_on(verify_tee_attestation(tee_type, quote)).unwrap_or(false)
+            rt.block_on(verify_tee_attestation(&tee_type, &quote)).unwrap_or(false)
         }
     }
 }
