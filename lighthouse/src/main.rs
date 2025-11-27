@@ -42,7 +42,8 @@ pub static LONG_VERSION: LazyLock<String> = LazyLock::new(|| {
          SHA256 hardware acceleration: {}\n\
          Allocator: {}\n\
          Profile: {}\n\
-         Specs: mainnet (true), minimal ({}), gnosis ({})",
+         Specs: mainnet (true), minimal ({}), gnosis ({})\n\
+         TEE attestation: {}",
         SHORT_VERSION.as_str(),
         bls_library_name(),
         bls_hardware_acceleration(),
@@ -51,6 +52,7 @@ pub static LONG_VERSION: LazyLock<String> = LazyLock::new(|| {
         build_profile_name(),
         cfg!(feature = "spec-minimal"),
         cfg!(feature = "gnosis"),
+        true, // tee-attestation is always enabled
     )
 });
 

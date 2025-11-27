@@ -37,8 +37,6 @@ beacon-node-redb = ["store/redb"]
 console-subscriber = ["console-subscriber/default"]
 # Force the use of the system memory allocator rather than jemalloc.
 sysmalloc = ["malloc_utils/sysmalloc"]
-# Enable TEE attestation support (Linux only - requires TSS/TPM libraries)
-tee-attestation = ["beacon_node/tee-attestation", "types/tee-attestation"]
 
 [dependencies]
 account_manager = { "path" = "../account_manager" }

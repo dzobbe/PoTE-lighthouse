@@ -1,12 +1,13 @@
 use crate::tee_attestation::{AttestationResult, TEEQuote, TEE_QUOTE_SIZE};
 use crate::tee_types::TEEType;
+use hex;
 
 /// Real TEE attestation verification using lunal-attestation library.
 pub async fn verify_tee_attestation(
     tee_type: &TEEType,
     quote: &TEEQuote,
 ) -> Result<bool, String> {
-    tracing::debug!(
+    tracing::info!(
         "Verifying TEE attestation for type: {} with quote length: {} bytes",
         tee_type.as_str(),
         quote.as_bytes().len()
@@ -19,6 +20,13 @@ pub async fn verify_tee_attestation(
     // For now, we'll try to verify the entire quote, handling padding in the verification functions
     let actual_quote_end = find_quote_end(quote_bytes);
     let actual_quote_data = &quote_bytes[..actual_quote_end];
+    
+    tracing::info!(
+        "🔍 Quote extraction: Full quote size: {} bytes, Extracted quote size: {} bytes (trimmed {} bytes of padding)",
+        quote_bytes.len(),
+        actual_quote_data.len(),
+        quote_bytes.len() - actual_quote_end
+    );
 
     match tee_type {
         TEEType::SEV => {
@@ -44,116 +52,210 @@ fn find_quote_end(quote_bytes: &[u8; TEE_QUOTE_SIZE]) -> usize {
     // We'll look for 32 consecutive zeros as a likely padding indicator
     for i in (0..quote_bytes.len().saturating_sub(32)).rev() {
         if quote_bytes[i..i + 32].iter().all(|&b| b == 0) {
+            tracing::info!(
+                "🔍 Found padding pattern at offset {} (32 consecutive zeros), using quote length: {} bytes",
+                i,
+                i
+            );
             return i;
         }
     }
     // If no clear padding found, assume all bytes are used
+    tracing::info!(
+        "🔍 No padding pattern found, using full quote length: {} bytes",
+        quote_bytes.len()
+    );
     quote_bytes.len()
+}
+
+/// Trim null bytes from the end of a byte slice
+fn trim_null_bytes(data: &[u8]) -> &[u8] {
+    let mut end = data.len();
+    while end > 0 && data[end - 1] == 0 {
+        end -= 1;
+    }
+    &data[..end]
 }
 
 /// Verify AMD SEV-SNP attestation
 async fn verify_amd_attestation(quote_data: &[u8]) -> Result<bool, String> {
-    #[cfg(feature = "tee-attestation")]
-    {
-        use lunal_attestation::amd;
-        
-        // The quote data is expected to be base64-encoded and possibly compressed
-        // Try as compressed base64 string first (most common format)
-        if let Ok(base64_str) = std::str::from_utf8(quote_data) {
-            let trimmed = base64_str.trim();
-            match amd::verify::verify_compressed(&[], trimmed, Some(false)).await {
-                Ok(_result) => {
-                    tracing::debug!("AMD attestation verification successful (compressed)");
-                    return Ok(true);
-                }
-                Err(e) => {
-                    tracing::debug!("Failed to verify as compressed base64: {}", e);
-                }
-            }
-        }
-
-        // Try to decode as base64 and parse as AttestationEvidence
-        let decoded = if let Ok(s) = std::str::from_utf8(quote_data) {
-            // If it's valid UTF-8, try to decode as base64
-            if let Ok(decoded) = base64::decode(s) {
-                decoded
-            } else {
-                // If base64 decode fails, assume it's already the data
-                quote_data.to_vec()
-            }
+    use lunal_attestation::amd;
+    
+    tracing::info!(
+        "🔍 AMD attestation verification: Starting with quote_data length: {} bytes",
+        quote_data.len()
+    );
+    
+    // Trim null bytes from the end (padding)
+    let quote_data_trimmed = trim_null_bytes(quote_data);
+    tracing::info!(
+        "🔍 After trimming null bytes: length reduced from {} to {} bytes",
+        quote_data.len(),
+        quote_data_trimmed.len()
+    );
+    
+    // Log first and last bytes for debugging
+    if quote_data_trimmed.len() > 0 {
+        let preview_len = quote_data_trimmed.len().min(100);
+        let first_bytes = &quote_data_trimmed[..preview_len];
+        let last_bytes = if quote_data_trimmed.len() > 100 {
+            &quote_data_trimmed[quote_data_trimmed.len().saturating_sub(50)..]
         } else {
-            // If not valid UTF-8, assume it's already binary
-            quote_data.to_vec()
+            &[]
         };
-
-        // Try to parse as AttestationEvidence
-        match amd::AttestationEvidence::from_bytes(&decoded) {
-            Ok(evidence) => {
-                // Verify with empty custom data (or extract from evidence if needed)
-                match amd::verify::verify_evidence(&[], &evidence, Some(false)).await {
-                    Ok(_result) => {
-                        tracing::debug!("AMD attestation verification successful");
-                        Ok(true)
-                    }
-                    Err(e) => {
-                        tracing::warn!("AMD attestation verification failed: {}", e);
-                        Ok(false)
-                    }
-                }
+        tracing::info!(
+            "🔍 Quote data preview: first {} bytes (hex): {}, last {} bytes (hex): {}",
+            preview_len,
+            hex::encode(first_bytes),
+            last_bytes.len(),
+            if last_bytes.is_empty() {
+                "N/A".to_string()
+            } else {
+                hex::encode(last_bytes)
             }
-            Err(_) => {
-                tracing::warn!("Could not parse AMD attestation quote data");
-                Ok(false)
-            }
-        }
+        );
     }
     
-    #[cfg(not(feature = "tee-attestation"))]
-    {
-        let _ = quote_data; // Parameter not used when feature is disabled
-        tracing::warn!("AMD attestation feature not enabled (requires tee-attestation feature on Linux)");
-        Ok(false)
+    // Check if data is valid UTF-8
+    let is_utf8 = std::str::from_utf8(quote_data_trimmed).is_ok();
+    tracing::info!("🔍 Quote data is valid UTF-8: {}", is_utf8);
+    
+    // The quote data is expected to be base64-encoded and possibly compressed
+    // Try as compressed base64 string first (most common format)
+    if let Ok(base64_str) = std::str::from_utf8(quote_data_trimmed) {
+        let trimmed = base64_str.trim();
+        tracing::info!(
+            "🔍 Attempting compressed base64 verification: trimmed length: {} chars, first 100 chars: {}",
+            trimmed.len(),
+            if trimmed.len() > 100 {
+                &trimmed[..100]
+            } else {
+                trimmed
+            }
+        );
+        match amd::verify::verify_compressed(&[], trimmed, Some(false)).await {
+            Ok(_result) => {
+                tracing::info!("✅ AMD attestation verification successful (compressed base64)");
+                return Ok(true);
+            }
+            Err(e) => {
+                tracing::warn!("❌ Failed to verify as compressed base64: {}", e);
+            }
+        }
+    } else {
+        tracing::warn!("❌ Quote data is not valid UTF-8, skipping compressed base64 verification");
+    }
+
+    // Try to decode as base64 and parse as AttestationEvidence
+    let decoded = if let Ok(s) = std::str::from_utf8(quote_data_trimmed) {
+        let trimmed = s.trim();
+        tracing::info!(
+            "🔍 Attempting base64 decode: input length: {} chars, first 100 chars: {}",
+            trimmed.len(),
+            if trimmed.len() > 100 {
+                &trimmed[..100]
+            } else {
+                trimmed
+            }
+        );
+        // If it's valid UTF-8, try to decode as base64
+        match base64::decode(trimmed) {
+            Ok(decoded_bytes) => {
+                tracing::info!(
+                    "✅ Base64 decode successful: decoded length: {} bytes",
+                    decoded_bytes.len()
+                );
+                decoded_bytes
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "❌ Base64 decode failed: {}. Assuming quote_data is already binary.",
+                    e
+                );
+                quote_data_trimmed.to_vec()
+            }
+        }
+    } else {
+        tracing::warn!("❌ Quote data is not valid UTF-8. Assuming it's already binary data.");
+        quote_data_trimmed.to_vec()
+    };
+
+    tracing::info!(
+        "🔍 Attempting to parse as AttestationEvidence: decoded length: {} bytes",
+        decoded.len()
+    );
+    
+    // Log preview of decoded data
+    if decoded.len() > 0 {
+        let preview_len = decoded.len().min(100);
+        let first_bytes = &decoded[..preview_len];
+        tracing::info!(
+            "🔍 Decoded data preview: first {} bytes (hex): {}",
+            preview_len,
+            hex::encode(first_bytes)
+        );
+    }
+
+    // Try to parse as AttestationEvidence
+    match amd::AttestationEvidence::from_bytes(&decoded) {
+        Ok(evidence) => {
+            tracing::info!("✅ Successfully parsed as AttestationEvidence");
+            // Verify with empty custom data (or extract from evidence if needed)
+            match amd::verify::verify_evidence(&[], &evidence, Some(false)).await {
+                Ok(_result) => {
+                    tracing::info!("✅ AMD attestation verification successful");
+                    Ok(true)
+                }
+                Err(e) => {
+                    tracing::warn!("❌ AMD attestation verification failed: {}", e);
+                    Ok(false)
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                "❌ Could not parse AMD attestation quote data as AttestationEvidence: {}",
+                e
+            );
+            tracing::warn!(
+                "   Quote data length: {} bytes, Decoded length: {} bytes, Is UTF-8: {}",
+                quote_data.len(),
+                decoded.len(),
+                is_utf8
+            );
+            Ok(false)
+        }
     }
 }
 
 /// Verify Intel TDX attestation
 async fn verify_tdx_attestation(quote_data: &[u8]) -> Result<bool, String> {
-    #[cfg(all(feature = "tee-attestation", feature = "attestation-tdx"))]
-    {
-        use lunal_attestation::verify;
-        
-        // Try to decode as base64 string
-        let quote_str = if let Ok(s) = std::str::from_utf8(quote_data) {
-            s.trim().to_string()
-        } else {
-            // If not valid UTF-8, encode as base64
-            base64::encode(quote_data)
-        };
-
-        match verify::verify_attestation(&quote_str).await {
-            Ok(_verified_output) => {
-                tracing::debug!("TDX attestation verification successful");
-                Ok(true)
-            }
-            Err(e) => {
-                tracing::warn!("TDX attestation verification failed: {}", e);
-                Ok(false)
-            }
-        }
-    }
+    use lunal_attestation::verify;
     
-    #[cfg(not(all(feature = "tee-attestation", feature = "attestation-tdx")))]
-    {
-        let _ = quote_data; // Parameter not used when feature is disabled
-        tracing::warn!("TDX attestation feature not enabled (requires tee-attestation feature on Linux)");
-        Ok(false)
+    // Try to decode as base64 string
+    let quote_str = if let Ok(s) = std::str::from_utf8(quote_data) {
+        s.trim().to_string()
+    } else {
+        // If not valid UTF-8, encode as base64
+        base64::encode(quote_data)
+    };
+
+    match verify::verify_attestation(&quote_str).await {
+        Ok(_verified_output) => {
+            tracing::info!("TDX attestation verification successful");
+            Ok(true)
+        }
+        Err(e) => {
+            tracing::warn!("TDX attestation verification failed: {}", e);
+            Ok(false)
+        }
     }
 }
 
 /// Generate a TEE attestation quote for the given TEE type.
 /// Returns a fixed-size TEEQuote (8192 bytes) with the actual quote data and padding.
 pub async fn generate_tee_quote(tee_type: &TEEType, custom_data: &[u8]) -> Result<TEEQuote, String> {
-    tracing::debug!(
+    tracing::info!(
         "Generating TEE attestation quote for type: {}",
         tee_type.as_str()
     );
@@ -178,56 +280,54 @@ pub async fn generate_tee_quote(tee_type: &TEEType, custom_data: &[u8]) -> Resul
 
 /// Generate AMD SEV-SNP attestation
 async fn generate_amd_attestation(custom_data: &[u8]) -> Result<Vec<u8>, String> {
-    #[cfg(all(feature = "tee-attestation", feature = "attestation"))]
-    {
-        use lunal_attestation::amd;
-        
-        match amd::attest::attest_compressed(custom_data).await {
-            Ok(base64_encoded) => {
-                // Return as bytes (base64 string)
-                Ok(base64_encoded.into_bytes())
-            }
-            Err(e) => {
-                tracing::warn!("Failed to generate AMD attestation: {}", e);
-                Err(format!("AMD attestation generation failed: {}", e))
-            }
-        }
-    }
+    use lunal_attestation::amd;
     
-    #[cfg(not(all(feature = "tee-attestation", feature = "attestation")))]
-    {
-        Err("AMD attestation feature not enabled (requires tee-attestation feature on Linux)".to_string())
+    tracing::info!(
+        "🔍 Generating AMD attestation: custom_data length: {} bytes",
+        custom_data.len()
+    );
+    
+    match amd::attest::attest_compressed(custom_data).await {
+        Ok(base64_encoded) => {
+            tracing::info!(
+                "✅ Generated AMD attestation (compressed base64): length: {} chars, first 100 chars: {}",
+                base64_encoded.len(),
+                if base64_encoded.len() > 100 {
+                    &base64_encoded[..100]
+                } else {
+                    &base64_encoded
+                }
+            );
+            // Return as bytes (base64 string)
+            Ok(base64_encoded.into_bytes())
+        }
+        Err(e) => {
+            tracing::warn!("❌ Failed to generate AMD attestation: {}", e);
+            Err(format!("AMD attestation generation failed: {}", e))
+        }
     }
 }
 
 /// Generate Intel TDX attestation
 async fn generate_tdx_attestation(custom_data: &[u8]) -> Result<Vec<u8>, String> {
-    #[cfg(all(feature = "tee-attestation", feature = "attestation-tdx"))]
-    {
-        use lunal_attestation::attestation;
-        
-        match attestation::get_compressed_encoded_attestation() {
-            Ok(base64_encoded) => {
-                // Return as bytes (base64 string)
-                Ok(base64_encoded.into_bytes())
-            }
-            Err(e) => {
-                tracing::warn!("Failed to generate TDX attestation: {}", e);
-                Err(format!("TDX attestation generation failed: {}", e))
-            }
-        }
-    }
+    use lunal_attestation::attestation;
     
-    #[cfg(not(all(feature = "tee-attestation", feature = "attestation-tdx")))]
-    {
-        Err("TDX attestation feature not enabled (requires tee-attestation feature on Linux)".to_string())
+    match attestation::get_compressed_encoded_attestation() {
+        Ok(base64_encoded) => {
+            // Return as bytes (base64 string)
+            Ok(base64_encoded.into_bytes())
+        }
+        Err(e) => {
+            tracing::warn!("Failed to generate TDX attestation: {}", e);
+            Err(format!("TDX attestation generation failed: {}", e))
+        }
     }
 }
 
 /// Synchronous wrapper for TEE attestation verification.
 /// This blocks on the async verification function for use in synchronous contexts.
 pub fn verify_tee_attestation_sync(tee_type: &TEEType, quote: &TEEQuote) -> bool {
-    tracing::debug!(
+    tracing::info!(
         "Verifying TEE attestation (synchronous) for type: {} with quote length: {} bytes",
         tee_type.as_str(),
         quote.as_bytes().len()
@@ -279,7 +379,7 @@ pub fn verify_tee_attestation_detailed(
     tee_type: &TEEType,
     _quote: &TEEQuote,
 ) -> AttestationResult {
-    tracing::debug!("Detailed TEE verification for type: {}", tee_type.as_str());
+    tracing::info!("Detailed TEE verification for type: {}", tee_type.as_str());
 
     AttestationResult {
         is_valid: true,
@@ -411,5 +511,72 @@ impl AttestationCache {
 
     pub fn put(&mut self, quote_data: Vec<u8>, result: AttestationResult) {
         self.cache.insert(quote_data, result);
+    }
+}
+
+/// Check if the tee-attestation feature is enabled at compile time.
+/// This function always returns true since tee-attestation is now always enabled.
+/// 
+/// # Returns
+/// 
+/// - Always returns `true` (tee-attestation is always enabled)
+/// 
+/// # Example
+/// 
+/// ```rust
+/// use types::attestation_service::is_tee_attestation_enabled;
+/// 
+/// if is_tee_attestation_enabled() {
+///     println!("TEE attestation feature is enabled!");
+/// }
+/// ```
+pub fn is_tee_attestation_enabled() -> bool {
+    true
+}
+
+/// Check if the tee-attestation feature is enabled and if the lunal-attestation dependency is available.
+/// This provides a more comprehensive check than `is_tee_attestation_enabled()`.
+/// 
+/// # Returns
+/// 
+/// A tuple of (feature_enabled, dependency_available) - both always true since tee-attestation is always enabled
+/// 
+/// # Example
+/// 
+/// ```rust
+/// use types::attestation_service::check_tee_attestation_support;
+/// 
+/// let (feature_enabled, dep_available) = check_tee_attestation_support();
+/// if feature_enabled && dep_available {
+///     println!("TEE attestation is fully supported!");
+/// }
+/// ```
+pub fn check_tee_attestation_support() -> (bool, bool) {
+    // TEE attestation is always enabled, so both are always true
+    (true, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tee_attestation_feature_check() {
+        let enabled = is_tee_attestation_enabled();
+        println!("TEE attestation feature enabled: {}", enabled);
+        
+        // TEE attestation is always enabled now
+        assert!(enabled, "TEE attestation should always be enabled");
+    }
+
+    #[test]
+    fn test_tee_attestation_support_check() {
+        let (feature_enabled, dep_available) = check_tee_attestation_support();
+        println!("TEE attestation feature enabled: {}", feature_enabled);
+        println!("TEE attestation dependency available: {}", dep_available);
+        
+        // Both should always be true since tee-attestation is always enabled
+        assert!(feature_enabled, "TEE attestation feature should always be enabled");
+        assert!(dep_available, "TEE attestation dependency should always be available");
     }
 }

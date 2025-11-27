@@ -1,14 +1,11 @@
 FROM rust:1.88.0-bullseye AS builder
 RUN apt-get update && apt-get -y upgrade && apt-get install -y cmake libclang-dev
 COPY . lighthouse
-ARG FEATURES
+ARG FEATURES=""
 ARG PROFILE=release
 ARG CARGO_USE_GIT_CLI=true
-# Install TSS2 libraries if tee-attestation feature is enabled
-# Check ARG before setting ENV to ensure it's available
-RUN if echo "${FEATURES}" | grep -q "tee-attestation"; then \
-    apt-get install -y pkg-config libtss2-dev libclang-dev; \
-    fi
+# Install TSS2 libraries (tee-attestation is always enabled)
+RUN apt-get install -y pkg-config libtss2-dev
 ENV FEATURES=$FEATURES
 ENV PROFILE=$PROFILE
 ENV CARGO_NET_GIT_FETCH_WITH_CLI=$CARGO_USE_GIT_CLI

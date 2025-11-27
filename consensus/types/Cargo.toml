@@ -12,10 +12,6 @@ default = ["sqlite", "legacy-arith"]
 # Allow saturating arithmetic on slots and epochs. Enabled by default, but deprecated.
 legacy-arith = []
 sqlite = ["dep:rusqlite"]
-# Enable TEE attestation support (Linux only - requires TSS/TPM libraries)
-# This enables lunal-attestation with attestation features
-# On macOS/other platforms, compilation will work but attestation functions will gracefully return errors
-tee-attestation = ["dep:lunal-attestation", "lunal-attestation/attestation", "lunal-attestation/attestation-tdx"]
 arbitrary = [
     "dep:arbitrary",
     "bls/arbitrary",
@@ -71,8 +67,8 @@ tempfile = { workspace = true }
 test_random_derive = { path = "../../common/test_random_derive" }
 tokio = { workspace = true }
 tracing = { workspace = true }
-# lunal-attestation is optional - only available when tee-attestation feature is enabled (Linux only)
-lunal-attestation = { git = "https://github.com/lunal-dev/attestation-rs", package = "lunal-attestation", optional = true }
+# lunal-attestation is always enabled (Linux only - requires TSS/TPM libraries)
+lunal-attestation = { git = "https://github.com/lunal-dev/attestation-rs", package = "lunal-attestation", features = ["attestation", "attestation-tdx"] }
 tree_hash = { workspace = true }
 tree_hash_derive = { workspace = true }
 

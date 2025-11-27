@@ -30,6 +30,30 @@ Lighthouse is:
 - Actively involved in the specification and security analysis of the
 	Ethereum proof-of-stake consensus specification.
 
+## Testing TEE-Extended Lighthouse (PoTE)
+
+This repository contains a TEE-extended version of Lighthouse where the PoS (Proof of Stake) consensus is replaced with PoTE (Proof of Trusted Execution). To test this version, you need to use a patched Kurtosis that allows mounting a TEE device in the Kurtosis container.
+
+### Prerequisites
+
+The patched Kurtosis is available at: https://github.com/dzobbe/PoTE-kurtosis
+
+### Building the Patched Kurtosis
+
+To build the Kurtosis binary, run the following commands in the PoTE-kurtosis repository:
+
+```bash
+./scripts/build.sh
+
+./core/scripts/build.sh false false
+
+./engine/scripts/build.sh false false
+
+./cli/cli/scripts/build.sh
+```
+
+This patched version enables TEE device mounting, which is required for testing the PoTE consensus implementation.
+
 ## Staking Deposit Contract
 
 The Lighthouse team acknowledges

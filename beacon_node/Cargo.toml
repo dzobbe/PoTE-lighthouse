@@ -15,8 +15,6 @@ path = "src/lib.rs"
 write_ssz_files = [
     "beacon_chain/write_ssz_files",
 ] # Writes debugging .ssz files to /tmp during block processing.
-# Enable TEE attestation support (Linux only - requires TSS/TPM libraries)
-tee-attestation = ["beacon_chain/tee-attestation", "types/tee-attestation"]
 
 [dependencies]
 account_utils = { workspace = true }

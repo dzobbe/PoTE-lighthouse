@@ -13,8 +13,6 @@ participation_metrics = []  # Exposes validator participation metrics to Prometh
 fork_from_env = [] # Initialise the harness chain spec from the FORK_NAME env variable
 portable = ["bls/supranational-portable"]
 test_backfill = []
-# Enable TEE attestation support (Linux only - requires TSS/TPM libraries)
-tee-attestation = ["dep:lunal-attestation", "types/tee-attestation"]
 
 [dependencies]
 alloy-primitives = { workspace = true }
@@ -68,8 +66,8 @@ tracing = { workspace = true }
 tree_hash = { workspace = true }
 tree_hash_derive = { workspace = true }
 types = { workspace = true }
-# lunal-attestation is optional - only available when tee-attestation feature is enabled (Linux only)
-lunal-attestation = { git = "https://github.com/lunal-dev/attestation-rs", package = "lunal-attestation", optional = true }
+# lunal-attestation is always enabled (Linux only - requires TSS/TPM libraries)
+lunal-attestation = { git = "https://github.com/lunal-dev/attestation-rs", package = "lunal-attestation" }
 zstd = { workspace = true }
 
 [dev-dependencies]
