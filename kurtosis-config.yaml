@@ -1,51 +1,23 @@
-
 participants:
-  - el_type: geth
-    cl_type: lighthouse
-    cl_image: docker.io/giobbe/pote-lighthouse-amd64
-    validator_count: 5  # Number of validators for each node
-    count: 3
-    cl_extra_env_vars:
-      RUST_LOG: "info,lighthouse=debug,eth2_network_config=info"  
-    cl_devices: ["/dev/tpm0"]
-    
+- el_type: geth
+  cl_type: lighthouse
+  cl_image: docker.io/giobbe/pote-lighthouse-amd64
+  validator_count: 15
+  count: 15
+  cl_extra_env_vars:
+    RUST_LOG: info,lighthouse=debug,eth2_network_config=info
+  cl_devices:
+  - /dev/tpm0
 network_params:
-  network_id: "585858"
-# Genesis gas limit (in hex or decimal)
+  network_id: '585858'
   gas_limit: 30000000
-  # Seconds per slot
-  seconds_per_slot: 12
-  # Preloaded contracts with initial balances
-  additional_preloaded_contracts: |
-    {
-      "0x1000000000000000000000000000000000000001": {
-        "balance": "100000000000000000000000",
-        "comment": "Test account 1 (100K ETH)"
-      },
-      "0x2000000000000000000000000000000000000002": {
-        "balance": "100000000000000000000000",
-        "comment": "Test account 2 (100K ETH)"
-      },
-      "0x3000000000000000000000000000000000000003": {
-        "balance": "50000000000000000000000",
-        "comment": "Test account 3 (50K ETH)"
-      }
-    }
-
-# Point the package at our *custom* genesis generator (built with our SSZ)
+  seconds_per_slot: 24
+  additional_preloaded_contracts: "{\n  \"0x1000000000000000000000000000000000000001\": {\n    \"balance\": \"100000000000000000000000\",\n    \"comment\": \"Test account 1 (100K ETH)\"\n  },\n  \"0x2000000000000000000000000000000000000002\": {\n    \"balance\": \"100000000000000000000000\",\n    \"comment\": \"Test account 2 (100K ETH)\"\n  },\n  \"0x3000000000000000000000000000000000000003\": {\n    \"balance\": \"50000000000000000000000\",\n    \"comment\": \"Test account 3 (50K ETH)\"\n  }\n}\n"
 ethereum_genesis_generator_params:
   image: docker.io/giobbe/pote-ethereum-genesis-generator-amd64
-  extra_env: {MNEMONICS_FILE: /mnemonics.yaml}
-
+  extra_env:
+    MNEMONICS_FILE: /mnemonics.yaml
 additional_services:
-  - dora
-  # - blockscout
-
-# Custom dora configuration
+- dora
 dora_params:
   image: docker.io/giobbe/pote-dora-amd64
-
-
-# # Blockscout configuration
-# blockscout_params:
-#   image: docker.io/blockscout/blockscout:latest

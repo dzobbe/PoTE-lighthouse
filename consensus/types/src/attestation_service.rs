@@ -425,7 +425,7 @@ impl AzureAttestationService {
         // TODO: Implement real Azure Attestation Service integration.
         self.verify_quote_mock_http(quote).await
     }
-
+    
     /// Mock implementation of quote verification using HTTP.
     async fn verify_quote_mock_http(&self, quote: &TEEQuote) -> AttestationResult {
         if quote.as_bytes().len() < 432 {

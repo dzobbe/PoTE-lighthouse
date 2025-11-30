@@ -12,8 +12,49 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+from urllib.parse import urlparse
 import yaml
+
+
+def detect_metrics_port(beacon_url: str, default_port: int = 5054) -> int:
+    """
+    Auto-detect metrics port from beacon URL.
+    For Kurtosis setups, metrics port is typically API port + 1.
+    Falls back to default_port if detection fails.
+    """
+    try:
+        parsed = urlparse(beacon_url)
+        api_port = parsed.port
+        
+        # If no port specified, use default
+        if api_port is None:
+            return default_port
+        
+        # For Kurtosis-style high ports (typically > 30000), metrics port is +1
+        # For standard ports (5052), metrics port is 5054
+        if api_port > 30000:
+            # Kurtosis port-forwarded: metrics port is API port + 1
+            metrics_port = api_port + 1
+            # Verify it's accessible (optional check)
+            try:
+                import requests
+                test_url = f"http://{parsed.hostname}:{metrics_port}/metrics"
+                response = requests.get(test_url, timeout=2)
+                if response.status_code == 200:
+                    return metrics_port
+            except:
+                # If check fails, still use +1 as it's the pattern
+                pass
+            return metrics_port
+        elif api_port == 5052:
+            # Standard Lighthouse setup
+            return 5054
+        else:
+            # Unknown setup, try +1 or use default
+            return api_port + 1 if api_port < 10000 else default_port
+    except Exception:
+        return default_port
 
 
 def load_kurtosis_config(config_path: str) -> Dict[str, Any]:
@@ -232,6 +273,13 @@ def main():
     )
     
     args = parser.parse_args()
+    
+    # Auto-detect metrics port if not explicitly provided
+    if args.metrics_port == 5054:  # Only auto-detect if using default
+        detected_port = detect_metrics_port(args.beacon_url, args.metrics_port)
+        if detected_port != args.metrics_port:
+            print(f"Auto-detected metrics port: {detected_port} (from beacon URL: {args.beacon_url})")
+            args.metrics_port = detected_port
     
     # Load scenarios
     if args.scenarios:
