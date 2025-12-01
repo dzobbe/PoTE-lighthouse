@@ -79,6 +79,12 @@ class MetricsSample:
     network_bytes_sent: Optional[int]
     propagation_delay: Optional[float]
     finalization_progression: Optional[float]
+    # New TEE-specific metrics
+    block_acceptance_latency_ms: Optional[float]  # Time from slot start to block acceptance
+    block_verification_time_ms: Optional[float]  # Time taken to verify block consensus
+    block_execution_time_ms: Optional[float]  # Time taken to verify block with execution layer
+    time_to_finality_seconds: Optional[float]  # Time from block creation to finalization
+    block_delay_total_ms: Optional[float]  # Total delay from slot start to head
 
 
 class KurtosisManager:
@@ -109,10 +115,10 @@ class KurtosisManager:
             print(f"⚠️  Warning: Error cleaning kurtosis: {e}")
     
     @staticmethod
-    def run(config_file: str) -> Tuple[Optional[str], Optional[int]]:
+    def run(config_file: str) -> Tuple[Optional[str], Optional[int], Optional[int]]:
         """
         Run Kurtosis with the given config file.
-        Returns (enclave_name, beacon_port)
+        Returns (enclave_name, beacon_port, metrics_exporter_port)
         """
         print(f"🚀 Starting Kurtosis with {config_file}...")
         try:
@@ -148,6 +154,9 @@ class KurtosisManager:
                 if enclave:
                     beacon_port = KurtosisManager._get_beacon_port_from_inspect(enclave)
             
+            # Extract metrics exporter port
+            metrics_exporter_port = KurtosisManager._extract_metrics_exporter_port(result.stdout)
+            
             print(f"✅ Kurtosis started successfully")
             if enclave:
                 print(f"   Enclave: {enclave}")
@@ -155,8 +164,10 @@ class KurtosisManager:
                 print(f"   Beacon port: {beacon_port}")
             else:
                 print("   ⚠️  Could not determine beacon port")
+            if metrics_exporter_port:
+                print(f"   Metrics exporter port: {metrics_exporter_port}")
             
-            return enclave, beacon_port
+            return enclave, beacon_port, metrics_exporter_port
             
         except subprocess.TimeoutExpired:
             print("❌ Kurtosis run timed out")
@@ -189,6 +200,40 @@ class KurtosisManager:
         lines = output.split('\n')
         for i, line in enumerate(lines):
             if '4000' in line or 'lighthouse' in line.lower():
+                # Check this line and next few lines for port
+                for check_line in lines[i:i+5]:
+                    port_match = re.search(r'http://127\.0\.0\.1:(\d+)', check_line)
+                    if port_match:
+                        try:
+                            return int(port_match.group(1))
+                        except ValueError:
+                            continue
+        
+        return None
+    
+    @staticmethod
+    def _extract_metrics_exporter_port(output: str) -> Optional[int]:
+        """Extract metrics exporter port from kurtosis run output"""
+        # Look for patterns like: ethereum-metrics-exporter-3-lighthouse-geth http: 9090/tcp -> http://127.0.0.1:32795
+        patterns = [
+            r'ethereum-metrics-exporter[^\n]*http[^\n]*->\s*http://127\.0\.0\.1:(\d+)',
+            r'http:\s*9090/tcp\s*->\s*http://127\.0\.0\.1:(\d+)',
+            r'metrics-exporter[^\n]*http[^\n]*->\s*http://127\.0\.0\.1:(\d+)',
+            r'http://127\.0\.0\.1:(\d+).*9090',  # Reverse pattern
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, output)
+            if match:
+                try:
+                    return int(match.group(1))
+                except ValueError:
+                    continue
+        
+        # Try to find any http://127.0.0.1:PORT near "9090" or "metrics"
+        lines = output.split('\n')
+        for i, line in enumerate(lines):
+            if '9090' in line or 'metrics-exporter' in line.lower() or 'metrics' in line.lower():
                 # Check this line and next few lines for port
                 for check_line in lines[i:i+5]:
                     port_match = re.search(r'http://127\.0\.0\.1:(\d+)', check_line)
@@ -274,10 +319,18 @@ class ConfigModifier:
 class MetricsCollector:
     """Collects metrics from the beacon API"""
     
-    def __init__(self, beacon_url: str):
+    def __init__(self, beacon_url: str, seconds_per_slot: int = 12, metrics_exporter_port: Optional[int] = None):
         self.beacon_url = beacon_url.rstrip('/')
         self.session = requests.Session()
         self.session.timeout = 5
+        self.seconds_per_slot = seconds_per_slot
+        self.metrics_exporter_port = metrics_exporter_port
+        # Track when blocks were first seen by slot
+        self.block_first_seen: Dict[int, float] = {}
+        # Track when slots started (estimated)
+        self.slot_start_times: Dict[int, float] = {}
+        # Track when blocks were created (by slot) for finality calculation
+        self.block_creation_times: Dict[int, float] = {}
     
     def collect_sample(self) -> MetricsSample:
         """Collect a single metrics sample"""
@@ -299,7 +352,12 @@ class MetricsCollector:
             network_bytes_received=None,
             network_bytes_sent=None,
             propagation_delay=None,
-            finalization_progression=None
+            finalization_progression=None,
+            block_acceptance_latency_ms=None,
+            block_verification_time_ms=None,
+            block_execution_time_ms=None,
+            time_to_finality_seconds=None,
+            block_delay_total_ms=None
         )
         
         try:
@@ -344,6 +402,64 @@ class MetricsCollector:
                 sample.memory_usage = health.get('memory_usage')
                 sample.network_bytes_received = health.get('network_bytes_received')
                 sample.network_bytes_sent = health.get('network_bytes_sent')
+            
+            # Get Prometheus metrics for block delays and verification times
+            prometheus_metrics = self._get_prometheus_metrics()
+            if prometheus_metrics:
+                sample.block_verification_time_ms = prometheus_metrics.get('consensus_verification_time_ms')
+                sample.block_execution_time_ms = prometheus_metrics.get('execution_time_ms')
+                sample.block_delay_total_ms = prometheus_metrics.get('block_delay_total_ms')
+            
+            # Calculate block acceptance latency and propagation delay
+            if sample.slot is not None:
+                current_time = sample.timestamp
+                # Track when we first see a slot
+                if sample.slot not in self.block_first_seen:
+                    self.block_first_seen[sample.slot] = current_time
+                    # Estimate slot start: use the first time we see the slot as a reference
+                    # and estimate backwards. For a more accurate calculation, we assume
+                    # the slot started at the beginning of the current slot period
+                    # Calculate which slot period we're in based on current time
+                    slot_period = int(current_time / self.seconds_per_slot)
+                    estimated_slot_start = slot_period * self.seconds_per_slot
+                    self.slot_start_times[sample.slot] = estimated_slot_start
+                
+                # Calculate propagation delay (time from slot start to when we first saw the block)
+                if sample.slot in self.slot_start_times and sample.slot in self.block_first_seen:
+                    slot_start = self.slot_start_times[sample.slot]
+                    first_seen = self.block_first_seen[sample.slot]
+                    # Propagation delay: time from slot start to first observation
+                    delay = (first_seen - slot_start) * 1000  # Convert to ms
+                    if delay >= 0:  # Only record positive delays
+                        sample.propagation_delay = delay
+                    # Block acceptance latency: time from slot start to current observation
+                    latency = (current_time - slot_start) * 1000  # Convert to ms
+                    if latency >= 0:
+                        sample.block_acceptance_latency_ms = latency
+            
+            # Track block creation times for finality calculation
+            if sample.slot is not None and sample.slot not in self.block_creation_times:
+                # Use slot start time if available, otherwise use current time
+                if sample.slot in self.slot_start_times:
+                    self.block_creation_times[sample.slot] = self.slot_start_times[sample.slot]
+                else:
+                    self.block_creation_times[sample.slot] = sample.timestamp
+            
+            # Calculate time to finality
+            # Finalization requires 2 epochs (64 slots in mainnet, 32 slots per epoch)
+            if sample.head_slot and sample.finalized_slot is not None and sample.finalized_slot > 0:
+                # Check if we have the creation time for the finalized slot
+                if sample.finalized_slot in self.block_creation_times:
+                    block_creation_time = self.block_creation_times[sample.finalized_slot]
+                    time_to_finality = sample.timestamp - block_creation_time
+                    if time_to_finality >= 0:
+                        sample.time_to_finality_seconds = time_to_finality
+                elif sample.finalized_slot in self.slot_start_times:
+                    # Fallback to slot start time
+                    finalized_slot_start = self.slot_start_times[sample.finalized_slot]
+                    time_to_finality = sample.timestamp - finalized_slot_start
+                    if time_to_finality >= 0:
+                        sample.time_to_finality_seconds = time_to_finality
             
         except Exception as e:
             print(f"⚠️  Error collecting metrics: {e}")
@@ -486,6 +602,109 @@ class MetricsCollector:
             pass
         return None
     
+    def _get_prometheus_metrics(self) -> Optional[Dict]:
+        """Get Prometheus metrics for block delays and verification times from metrics exporter"""
+        metrics = {}
+        
+        # Try multiple endpoints:
+        # 1. Metrics exporter (typically on port 9090, but mapped to different local port)
+        # 2. Direct beacon API /metrics endpoint
+        # 3. Try to extract metrics exporter port from beacon_url if possible
+        
+        # Build list of endpoints to try
+        endpoints_to_try = []
+        
+        # First priority: use the metrics exporter port if we have it
+        if self.metrics_exporter_port:
+            endpoints_to_try.append(f"http://127.0.0.1:{self.metrics_exporter_port}/metrics")
+        
+        # Extract base URL and port from beacon_url
+        # beacon_url is like http://127.0.0.1:PORT
+        base_url_match = re.match(r'(http://127\.0\.0\.1:)(\d+)', self.beacon_url)
+        if base_url_match:
+            base = base_url_match.group(1)
+            beacon_port = int(base_url_match.group(2))
+            # Try metrics exporter on common ports (9090 is typical, but mapped differently)
+            metrics_ports_to_try = [
+                9090,  # Default metrics exporter port
+                beacon_port + 1,  # Sometimes next to beacon port
+                beacon_port - 1,
+            ]
+            endpoints_to_try.extend([f"{base}{port}/metrics" for port in metrics_ports_to_try])
+        else:
+            # Fallback: just try 9090
+            endpoints_to_try.append("http://127.0.0.1:9090/metrics")
+        
+        # Also try direct beacon API metrics endpoint
+        endpoints_to_try.append(f"{self.beacon_url}/metrics")
+        
+        for endpoint in endpoints_to_try:
+            try:
+                response = self.session.get(endpoint, timeout=2)
+                if response.status_code == 200:
+                    metrics_text = response.text
+                    
+                    # Check if we got valid Prometheus format (should have some metrics)
+                    if not metrics_text or len(metrics_text) < 100:
+                        continue
+                    
+                    # Parse Prometheus format metrics
+                    # Prometheus format can be: metric_name{labels} value or metric_name value
+                    # Values can be integers or floats
+                    
+                    # beacon_block_delay_consensus_verification_time (IntGauge, milliseconds)
+                    patterns = [
+                        r'beacon_block_delay_consensus_verification_time\{[^}]*\}\s+([\d.]+)',
+                        r'beacon_block_delay_consensus_verification_time\s+([\d.]+)',
+                    ]
+                    for pattern in patterns:
+                        match = re.search(pattern, metrics_text)
+                        if match:
+                            metrics['consensus_verification_time_ms'] = float(match.group(1))
+                            break
+                    
+                    # beacon_block_delay_execution_time
+                    patterns = [
+                        r'beacon_block_delay_execution_time\{[^}]*\}\s+([\d.]+)',
+                        r'beacon_block_delay_execution_time\s+([\d.]+)',
+                    ]
+                    for pattern in patterns:
+                        match = re.search(pattern, metrics_text)
+                        if match:
+                            metrics['execution_time_ms'] = float(match.group(1))
+                            break
+                    
+                    # beacon_block_delay_total
+                    patterns = [
+                        r'beacon_block_delay_total\{[^}]*\}\s+([\d.]+)',
+                        r'beacon_block_delay_total\s+([\d.]+)',
+                    ]
+                    for pattern in patterns:
+                        match = re.search(pattern, metrics_text)
+                        if match:
+                            metrics['block_delay_total_ms'] = float(match.group(1))
+                            break
+                    
+                    # beacon_block_delay_gossip_verification
+                    patterns = [
+                        r'beacon_block_delay_gossip_verification\{[^}]*\}\s+([\d.]+)',
+                        r'beacon_block_delay_gossip_verification\s+([\d.]+)',
+                    ]
+                    for pattern in patterns:
+                        match = re.search(pattern, metrics_text)
+                        if match:
+                            metrics['gossip_verification_ms'] = float(match.group(1))
+                            break
+                    
+                    # If we found any metrics, return them
+                    if metrics:
+                        return metrics
+            except Exception:
+                # Continue to next endpoint
+                continue
+        
+        return None if not metrics else metrics
+    
     def collect_metrics_over_time(self, duration: int, interval: int) -> List[MetricsSample]:
         """Collect metrics over a period of time"""
         samples = []
@@ -590,6 +809,14 @@ class ResultsManager:
         cpu_usages = [s.cpu_usage for s in samples if s.cpu_usage is not None]
         memory_usages = [s.memory_usage for s in samples if s.memory_usage is not None]
         
+        # New TEE-specific metrics
+        block_acceptance_latencies = [s.block_acceptance_latency_ms for s in samples if s.block_acceptance_latency_ms is not None]
+        block_verification_times = [s.block_verification_time_ms for s in samples if s.block_verification_time_ms is not None]
+        block_execution_times = [s.block_execution_time_ms for s in samples if s.block_execution_time_ms is not None]
+        time_to_finalities = [s.time_to_finality_seconds for s in samples if s.time_to_finality_seconds is not None]
+        block_delay_totals = [s.block_delay_total_ms for s in samples if s.block_delay_total_ms is not None]
+        propagation_delays = [s.propagation_delay for s in samples if s.propagation_delay is not None]
+        
         if block_rates:
             stats['avg_block_production_rate'] = statistics.mean(block_rates)
             stats['max_block_production_rate'] = max(block_rates)
@@ -618,6 +845,37 @@ class ResultsManager:
         if memory_usages:
             stats['avg_memory_usage'] = statistics.mean(memory_usages)
             stats['max_memory_usage'] = max(memory_usages)
+        
+        # TEE-specific metrics statistics
+        if block_acceptance_latencies:
+            stats['avg_block_acceptance_latency_ms'] = statistics.mean(block_acceptance_latencies)
+            stats['max_block_acceptance_latency_ms'] = max(block_acceptance_latencies)
+            stats['min_block_acceptance_latency_ms'] = min(block_acceptance_latencies)
+        
+        if block_verification_times:
+            stats['avg_block_verification_time_ms'] = statistics.mean(block_verification_times)
+            stats['max_block_verification_time_ms'] = max(block_verification_times)
+            stats['min_block_verification_time_ms'] = min(block_verification_times)
+        
+        if block_execution_times:
+            stats['avg_block_execution_time_ms'] = statistics.mean(block_execution_times)
+            stats['max_block_execution_time_ms'] = max(block_execution_times)
+            stats['min_block_execution_time_ms'] = min(block_execution_times)
+        
+        if time_to_finalities:
+            stats['avg_time_to_finality_seconds'] = statistics.mean(time_to_finalities)
+            stats['max_time_to_finality_seconds'] = max(time_to_finalities)
+            stats['min_time_to_finality_seconds'] = min(time_to_finalities)
+        
+        if block_delay_totals:
+            stats['avg_block_delay_total_ms'] = statistics.mean(block_delay_totals)
+            stats['max_block_delay_total_ms'] = max(block_delay_totals)
+            stats['min_block_delay_total_ms'] = min(block_delay_totals)
+        
+        if propagation_delays:
+            stats['avg_propagation_delay_ms'] = statistics.mean(propagation_delays)
+            stats['max_propagation_delay_ms'] = max(propagation_delays)
+            stats['min_propagation_delay_ms'] = min(propagation_delays)
         
         stats['total_samples'] = len(samples)
         
@@ -653,7 +911,7 @@ def run_test(test_config: TestConfig, duration: int = None, interval: int = None
     KurtosisManager.clean_all()
     
     # Run Kurtosis
-    enclave, beacon_port = KurtosisManager.run(config_file)
+    enclave, beacon_port, metrics_exporter_port = KurtosisManager.run(config_file)
     if not beacon_port:
         print("❌ Could not determine beacon port, skipping test")
         return False
@@ -688,7 +946,8 @@ def run_test(test_config: TestConfig, duration: int = None, interval: int = None
     if not api_ready:
         print("⚠️  Warning: Proceeding with metrics collection despite API readiness check failure")
     
-    collector = MetricsCollector(beacon_url)
+    collector = MetricsCollector(beacon_url, seconds_per_slot=test_config.seconds_per_slot, 
+                                 metrics_exporter_port=metrics_exporter_port)
     
     # Use provided duration/interval or defaults
     test_duration = duration if duration is not None else METRICS_COLLECTION_DURATION
