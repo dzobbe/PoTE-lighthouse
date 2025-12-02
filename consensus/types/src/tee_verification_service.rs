@@ -126,23 +126,22 @@ impl TeeVerificationService {
 
     /// Verify synchronously (for backward compatibility)
     /// Uses the shared runtime instead of creating a new one per verification
-    /// Note: Uses block_in_place to avoid blocking async threads that handle execution layer requests
+    /// Note: This should be called from a blocking context (e.g., spawn_blocking_handle)
+    /// If called from an async context, use verify_async instead
     pub fn verify_sync(&self, tee_type: &TEEType, quote: &TEEQuote) -> bool {
         let tee_type = tee_type.clone();
         let quote = quote.clone();
         let runtime_handle = self.runtime_handle.clone();
         let concurrency_limit = self.concurrency_limit.clone();
 
-        // Use block_in_place to ensure we're on a blocking thread
-        // This prevents blocking async threads that handle execution layer HTTP requests
-        tokio::task::block_in_place(|| {
-            runtime_handle.block_on(async {
-                let permit = concurrency_limit.acquire().await.ok();
-                if permit.is_none() {
-                    return false;
-                }
-                verify_tee_attestation(&tee_type, &quote).await.unwrap_or(false)
-            })
+        // We're already in a blocking context (from spawn_blocking_handle),
+        // so we can directly block_on without block_in_place overhead
+        runtime_handle.block_on(async {
+            let permit = concurrency_limit.acquire().await.ok();
+            if permit.is_none() {
+                return false;
+            }
+            verify_tee_attestation(&tee_type, &quote).await.unwrap_or(false)
         })
     }
 }

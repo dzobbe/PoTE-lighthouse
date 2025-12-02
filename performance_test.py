@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 import statistics
+import threading
 
 # Configuration
 VALIDATOR_COUNTS = [1, 5, 10, 15]
@@ -46,6 +47,7 @@ KURTOSIS_PACKAGE = 'github.com/dzobbe/PoTE-ethereum-package'
 METRICS_COLLECTION_DURATION = 300  # 5 minutes of metrics collection
 METRICS_SAMPLE_INTERVAL = 12  # Sample every 12 seconds
 STABILIZATION_WAIT = 60  # Wait 60 seconds after kurtosis starts before collecting metrics
+COMPLEX_BLOCKS_SCRIPT = 'generate_complex_blocks.py'  # Path to complex blocks generator
 
 
 @dataclass
@@ -85,6 +87,73 @@ class MetricsSample:
     block_execution_time_ms: Optional[float]  # Time taken to verify block with execution layer
     time_to_finality_seconds: Optional[float]  # Time from block creation to finalization
     block_delay_total_ms: Optional[float]  # Total delay from slot start to head
+
+
+class ComplexBlocksGenerator:
+    """Manages complex block generation during tests"""
+    
+    def __init__(self, rpc_port: Optional[int] = None, rate: float = 10, 
+                 transactions: Optional[int] = None, duration: Optional[int] = None):
+        self.rpc_port = rpc_port
+        self.rate = rate
+        self.transactions = transactions
+        self.duration = duration
+        self.process = None
+        self.thread = None
+    
+    def start(self):
+        """Start generating complex blocks in background"""
+        if not self.rpc_port:
+            print("⚠️  No RPC port provided, skipping complex block generation")
+            return False
+        
+        if not os.path.exists(COMPLEX_BLOCKS_SCRIPT):
+            print(f"⚠️  Complex blocks script not found: {COMPLEX_BLOCKS_SCRIPT}")
+            return False
+        
+        rpc_url = f"http://127.0.0.1:{self.rpc_port}"
+        
+        # Build command
+        cmd = ['python3', COMPLEX_BLOCKS_SCRIPT, '--rpc-url', rpc_url, '--rate', str(self.rate)]
+        
+        if self.duration:
+            cmd.extend(['--duration', str(self.duration)])
+        elif self.transactions:
+            cmd.extend(['--transactions', str(self.transactions)])
+        else:
+            # Default: run for test duration + buffer
+            if self.duration is None:
+                cmd.extend(['--duration', str(METRICS_COLLECTION_DURATION + 120)])
+        
+        print(f"🚀 Starting complex block generator: {' '.join(cmd)}")
+        
+        try:
+            self.process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            print(f"✅ Complex block generator started (PID: {self.process.pid})")
+            return True
+        except Exception as e:
+            print(f"❌ Failed to start complex block generator: {e}")
+            return False
+    
+    def stop(self):
+        """Stop the complex block generator"""
+        if self.process:
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=10)
+                print("✅ Complex block generator stopped")
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                print("⚠️  Force killed complex block generator")
+            except Exception as e:
+                print(f"⚠️  Error stopping complex block generator: {e}")
+            finally:
+                self.process = None
 
 
 class KurtosisManager:
@@ -276,6 +345,39 @@ class KurtosisManager:
                 return KurtosisManager._extract_beacon_port(result.stdout)
         except Exception as e:
             print(f"⚠️  Could not inspect enclave: {e}")
+        
+        return None
+    
+    @staticmethod
+    def _find_rpc_port_from_docker() -> Optional[int]:
+        """Find RPC port from docker ps (fallback method)"""
+        try:
+            result = subprocess.run(
+                ['docker', 'ps', '--format', '{{.Names}}\t{{.Ports}}'],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode == 0:
+                lines = result.stdout.split('\n')
+                first_match = None
+                
+                for line in lines:
+                    if 'el-' in line and 'geth-lighthouse' in line and '8545/tcp' in line:
+                        pattern = r'0\.0\.0\.0:(\d+)->8545/tcp'
+                        match = re.search(pattern, line)
+                        if match:
+                            port = int(match.group(1))
+                            if 'el-1-' in line:
+                                return port
+                            if first_match is None:
+                                first_match = port
+                
+                if first_match is not None:
+                    return first_match
+        except Exception:
+            pass
         
         return None
 
@@ -882,7 +984,8 @@ class ResultsManager:
         return stats
 
 
-def run_test(test_config: TestConfig, duration: int = None, interval: int = None) -> bool:
+def run_test(test_config: TestConfig, duration: int = None, interval: int = None, 
+             generate_complex_blocks: bool = False, tx_rate: float = 10) -> bool:
     """Run a single test configuration"""
     print("\n" + "="*80)
     print(f"🧪 Running test: {test_config.config_type.upper()}")
@@ -916,9 +1019,36 @@ def run_test(test_config: TestConfig, duration: int = None, interval: int = None
         print("❌ Could not determine beacon port, skipping test")
         return False
     
+    # Find RPC port for complex block generation
+    rpc_port = None
+    if generate_complex_blocks:
+        # Try to find RPC port from docker
+        rpc_port = KurtosisManager._find_rpc_port_from_docker()
+        if rpc_port:
+            print(f"🔍 Found RPC port: {rpc_port}")
+        else:
+            print("⚠️  Could not auto-detect RPC port for complex block generation")
+            print("   Complex blocks will not be generated")
+            generate_complex_blocks = False
+    
     # Wait for stabilization and verify beacon API is ready
     print(f"⏳ Waiting {STABILIZATION_WAIT} seconds for network to stabilize...")
     time.sleep(STABILIZATION_WAIT)
+    
+    # Start complex block generator if requested
+    block_generator = None
+    if generate_complex_blocks and rpc_port:
+        block_generator = ComplexBlocksGenerator(
+            rpc_port=rpc_port,
+            rate=tx_rate,
+            duration=duration if duration else METRICS_COLLECTION_DURATION + 60
+        )
+        if not block_generator.start():
+            print("⚠️  Failed to start complex block generator, continuing without it")
+            block_generator = None
+        else:
+            # Give it a moment to start sending transactions
+            time.sleep(5)
     
     # Collect metrics
     beacon_url = f"http://127.0.0.1:{beacon_port}"
@@ -962,6 +1092,10 @@ def run_test(test_config: TestConfig, duration: int = None, interval: int = None
         print("❌ No metrics collected, skipping save")
         return False
     
+    # Stop complex block generator if running
+    if block_generator:
+        block_generator.stop()
+    
     # Save results
     ResultsManager.save_results(test_config, samples, RESULTS_DIR)
     
@@ -988,6 +1122,10 @@ def main():
                        help=f'Metrics collection duration in seconds (default: {METRICS_COLLECTION_DURATION})')
     parser.add_argument('--sample-interval', type=int, default=METRICS_SAMPLE_INTERVAL,
                        help=f'Metrics sampling interval in seconds (default: {METRICS_SAMPLE_INTERVAL})')
+    parser.add_argument('--generate-complex-blocks', action='store_true',
+                       help='Generate complex blocks (transactions) during test')
+    parser.add_argument('--tx-rate', type=float, default=10.0,
+                       help='Transaction rate per second for complex block generation (default: 10)')
     
     args = parser.parse_args()
     
@@ -1044,7 +1182,9 @@ def main():
     
     for i, test_config in enumerate(test_configs, 1):
         print(f"\n[{i}/{len(test_configs)}] ", end="")
-        if run_test(test_config, test_duration, test_interval):
+        if run_test(test_config, test_duration, test_interval, 
+                   generate_complex_blocks=args.generate_complex_blocks,
+                   tx_rate=args.tx_rate):
             successful += 1
         else:
             failed += 1

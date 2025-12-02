@@ -98,6 +98,7 @@ pub mod sync_committee_message;
 pub mod sync_selection_proof;
 pub mod sync_subnet_id;
 pub mod tee_types;
+pub mod tee_verification_service;
 pub mod validator_registration_data;
 pub mod withdrawal;
 
