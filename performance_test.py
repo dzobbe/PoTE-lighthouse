@@ -136,7 +136,7 @@ class KurtosisManager:
             if result.returncode != 0:
                 print(f"❌ Kurtosis run failed with return code {result.returncode}")
                 print(result.stderr)
-                return None, None
+                return None, None, None
             
             # Extract enclave name from output
             enclave_match = re.search(r'Enclave name: (\S+)', result.stdout)
@@ -171,10 +171,10 @@ class KurtosisManager:
             
         except subprocess.TimeoutExpired:
             print("❌ Kurtosis run timed out")
-            return None, None
+            return None, None, None
         except Exception as e:
             print(f"❌ Error running Kurtosis: {e}")
-            return None, None
+            return None, None, None
     
     @staticmethod
     def _extract_beacon_port(output: str) -> Optional[int]:
