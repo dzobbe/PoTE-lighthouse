@@ -1,9 +1,0 @@
-[37mDEBU[0m[2025-11-04T13:24:55Z][backend_creator.go:getLocalDockerKurtosisBackend] Connecting to Docker daemon via unix socket '/var/run/docker.sock' 
-[36mINFO[0m[2025-11-04T13:24:55Z][main.go:getLogsDatabaseClient] Setting log retention period to '1' week(s). 
-[36mINFO[0m[2025-11-04T13:24:55Z][main.go:restApiServer] Running REST API server...                   
-[36mINFO[0m[2025-11-04T13:24:55Z][main.go:restApiServer] Setting-up CORS policy to accept requests from origins: [*] 
-[36mINFO[0m[2025-11-04T13:24:55Z][server.go:RunEnclaveManagerApiServer] Web server running and listening on port 8081 
-[37mDEBU[0m[2025-11-04T13:24:55Z][log_file_manager.go:func2] Scheduling log file path creation every '1m0s' minutes... 
-[37mDEBU[0m[2025-11-04T13:24:55Z][main.go:func1] Created environment js file with content: 
-window.env = {}; 
-[37mDEBU[0m[2025-11-04T13:24:55Z][log_file_manager.go:func1] Scheduling log removal for log retention every '6h0m0s' hours... 
